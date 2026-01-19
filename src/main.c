@@ -163,7 +163,7 @@ void run_interactive_cli(void) {
         printf("> ");
         fflush(stdout);
         
-        if (!fgets(input, sizeof(input), stdin)) {
+        if (!read_utf8_line(input, sizeof(input), stdin)) {
             printf("\n");
             break;
         }

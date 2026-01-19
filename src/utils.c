@@ -4,6 +4,10 @@
 
 #include "utils.h"
 
+#ifdef _WIN32
+#include <wchar.h>
+#endif
+
 /* ============================================
  * UTF-8 and Locale Support
  * ============================================ */
@@ -12,10 +16,61 @@ void init_utf8_support(void) {
     setlocale(LC_ALL, "");
     
 #ifdef _WIN32
+    /* Set console to UTF-8 code page for output */
     SetConsoleOutputCP(CP_UTF8);
     SetConsoleCP(CP_UTF8);
 #endif
 }
+
+#ifdef _WIN32
+/*
+ * Convert UTF-8 string to Windows wide string (UTF-16).
+ * Returns newly allocated wchar_t* that caller must free.
+ * Returns NULL on failure.
+ */
+wchar_t *utf8_to_wide(const char *utf8_str) {
+    if (!utf8_str) return NULL;
+    
+    /* Get required buffer size */
+    int wide_len = MultiByteToWideChar(CP_UTF8, 0, utf8_str, -1, NULL, 0);
+    if (wide_len == 0) return NULL;
+    
+    wchar_t *wide_str = malloc(wide_len * sizeof(wchar_t));
+    if (!wide_str) return NULL;
+    
+    /* Perform conversion */
+    if (MultiByteToWideChar(CP_UTF8, 0, utf8_str, -1, wide_str, wide_len) == 0) {
+        free(wide_str);
+        return NULL;
+    }
+    
+    return wide_str;
+}
+
+/*
+ * Convert Windows wide string (UTF-16) to UTF-8.
+ * Returns newly allocated char* that caller must free.
+ * Returns NULL on failure.
+ */
+char *wide_to_utf8(const wchar_t *wide_str) {
+    if (!wide_str) return NULL;
+    
+    /* Get required buffer size */
+    int utf8_len = WideCharToMultiByte(CP_UTF8, 0, wide_str, -1, NULL, 0, NULL, NULL);
+    if (utf8_len == 0) return NULL;
+    
+    char *utf8_str = malloc(utf8_len);
+    if (!utf8_str) return NULL;
+    
+    /* Perform conversion */
+    if (WideCharToMultiByte(CP_UTF8, 0, wide_str, -1, utf8_str, utf8_len, NULL, NULL) == 0) {
+        free(utf8_str);
+        return NULL;
+    }
+    
+    return utf8_str;
+}
+#endif
 
 /* ============================================
  * String Utilities
@@ -57,7 +112,7 @@ int get_confirmation(const char *prompt) {
     printf("%s (y/n): ", prompt);
     fflush(stdout);
     
-    if (!fgets(response, sizeof(response), stdin)) {
+    if (!read_utf8_line(response, sizeof(response), stdin)) {
         return 0;
     }
     
@@ -113,16 +168,39 @@ int get_default_db_path(char *buffer, size_t size) {
 }
 
 int directory_exists(const char *path) {
+#ifdef _WIN32
+    wchar_t *wide_path = utf8_to_wide(path);
+    if (!wide_path) return 0;
+    
+    struct _stat st;
+    int result = 0;
+    if (_wstat(wide_path, &st) == 0) {
+        result = (st.st_mode & _S_IFDIR) != 0;
+    }
+    free(wide_path);
+    return result;
+#else
     struct stat st;
     if (stat(path, &st) == 0) {
         return S_ISDIR(st.st_mode);
     }
     return 0;
+#endif
 }
 
 int file_exists(const char *path) {
+#ifdef _WIN32
+    wchar_t *wide_path = utf8_to_wide(path);
+    if (!wide_path) return 0;
+    
+    struct _stat st;
+    int result = (_wstat(wide_path, &st) == 0);
+    free(wide_path);
+    return result;
+#else
     struct stat st;
     return (stat(path, &st) == 0);
+#endif
 }
 
 void get_directory_from_path(const char *filepath, char *dir_buffer, size_t size) {
@@ -168,6 +246,79 @@ void parse_two_args(const char *input, char *arg1, size_t size1, char *arg2, siz
         trim_whitespace(arg2);
     }
 }
+
+/* ============================================
+ * UTF-8 Line Input
+ * ============================================ */
+
+#ifdef _WIN32
+/*
+ * Read a line of UTF-8 text from stdin on Windows.
+ * Uses ReadConsoleW for proper Unicode support.
+ */
+char *read_utf8_line(char *buffer, size_t size, FILE *stream) {
+    if (stream != stdin) {
+        /* For non-stdin, fall back to regular fgets */
+        return fgets(buffer, (int)size, stream);
+    }
+    
+    /* Get console input handle */
+    HANDLE hConsole = GetStdHandle(STD_INPUT_HANDLE);
+    if (hConsole == INVALID_HANDLE_VALUE) {
+        return fgets(buffer, (int)size, stream);  /* Fallback */
+    }
+    
+    /* Check if stdin is a console (not redirected) */
+    DWORD mode;
+    if (!GetConsoleMode(hConsole, &mode)) {
+        /* Not a console, use regular fgets */
+        return fgets(buffer, (int)size, stream);
+    }
+    
+    /* Allocate wide character buffer */
+    size_t wbuf_size = size;
+    wchar_t *wbuffer = malloc(wbuf_size * sizeof(wchar_t));
+    if (!wbuffer) {
+        return fgets(buffer, (int)size, stream);  /* Fallback */
+    }
+    
+    /* Read wide string from console */
+    DWORD chars_read = 0;
+    BOOL success = ReadConsoleW(hConsole, wbuffer, (DWORD)(wbuf_size - 1), &chars_read, NULL);
+    
+    if (!success || chars_read == 0) {
+        free(wbuffer);
+        return NULL;
+    }
+    
+    /* Null-terminate */
+    wbuffer[chars_read] = L'\0';
+    
+    /* Convert to UTF-8 */
+    char *utf8_str = wide_to_utf8(wbuffer);
+    free(wbuffer);
+    
+    if (!utf8_str) {
+        buffer[0] = '\0';
+        return buffer;
+    }
+    
+    /* Copy to output buffer */
+    strncpy(buffer, utf8_str, size - 1);
+    buffer[size - 1] = '\0';
+    free(utf8_str);
+    
+    return buffer;
+}
+#else
+/*
+ * On Unix/Linux/macOS, just use regular fgets.
+ * These systems typically use UTF-8 natively.
+ */
+char *read_utf8_line(char *buffer, size_t size, FILE *stream) {
+    return fgets(buffer, (int)size, stream);
+}
+#endif
 
 /* ============================================
  * Levenshtein Distance

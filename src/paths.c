@@ -5,6 +5,10 @@
 #include "paths.h"
 #include "database.h"
 
+#ifdef _WIN32
+#include <wchar.h>
+#endif
+
 /* ============================================
  * Path ID Lookup
  * ============================================ */
@@ -105,6 +109,9 @@ int remove_path_from_db(const char *path) {
  *    2 = add children and grandchildren
  *    etc.
  */
+
+#ifdef _WIN32
+/* Windows implementation using wide character APIs for Unicode support */
 int scan_directory(const char *dir_path, int *file_count, int *dir_count, 
                    int current_depth, int max_depth) {
     /* Safety limit to prevent infinite recursion */
@@ -114,9 +121,92 @@ int scan_directory(const char *dir_path, int *file_count, int *dir_count,
     }
     
     /* Check user-specified depth limit */
-    /* max_depth of -1 means unlimited */
-    /* current_depth 0 means we're scanning the root directory's contents */
-    /* So if max_depth is 0, we don't scan any contents */
+    if (max_depth >= 0 && current_depth > max_depth) {
+        return 0;
+    }
+    
+    /* Convert path to wide string */
+    wchar_t *wide_path = utf8_to_wide(dir_path);
+    if (!wide_path) {
+        fprintf(stderr, "Cannot convert path to wide string: %s\n", dir_path);
+        return -1;
+    }
+    
+    _WDIR *dir = _wopendir(wide_path);
+    free(wide_path);
+    
+    if (!dir) {
+        fprintf(stderr, "Cannot open directory: %s\n", dir_path);
+        return -1;
+    }
+    
+    struct _wdirent *entry;
+    char full_path[MAX_PATH_LENGTH];
+    struct _stat st;
+    
+    while ((entry = _wreaddir(dir)) != NULL) {
+        /* Skip . and .. */
+        if (wcscmp(entry->d_name, L".") == 0 || wcscmp(entry->d_name, L"..") == 0) {
+            continue;
+        }
+        
+        /* Convert entry name to UTF-8 */
+        char *entry_name = wide_to_utf8(entry->d_name);
+        if (!entry_name) {
+            continue;
+        }
+        
+        /* Build full path */
+        snprintf(full_path, sizeof(full_path), "%s%s%s", 
+                 dir_path, PATH_SEPARATOR_STR, entry_name);
+        
+        /* Convert full path to wide for stat */
+        wchar_t *wide_full = utf8_to_wide(full_path);
+        if (!wide_full) {
+            free(entry_name);
+            continue;
+        }
+        
+        if (_wstat(wide_full, &st) != 0) {
+            fprintf(stderr, "Cannot stat: %s\n", full_path);
+            free(wide_full);
+            free(entry_name);
+            continue;
+        }
+        free(wide_full);
+        
+        int is_dir = (st.st_mode & _S_IFDIR) != 0;
+        long long size = is_dir ? -1 : (long long)st.st_size;
+        
+        add_path_to_db(full_path, entry_name, is_dir, size, dir_path);
+        
+        if (is_dir) {
+            (*dir_count)++;
+            /* Recurse into subdirectory */
+            scan_directory(full_path, file_count, dir_count, 
+                           current_depth + 1, max_depth);
+        } else {
+            (*file_count)++;
+        }
+        
+        free(entry_name);
+    }
+    
+    _wclosedir(dir);
+    return 0;
+}
+
+#else
+/* Unix/Linux/macOS implementation */
+int scan_directory(const char *dir_path, int *file_count, int *dir_count, 
+                   int current_depth, int max_depth) {
+    /* Safety limit to prevent infinite recursion */
+    if (current_depth > MAX_RECURSION_DEPTH) {
+        fprintf(stderr, "Warning: Maximum recursion depth reached at %s\n", dir_path);
+        return 0;
+    }
+    
+    /* Check user-specified depth limit */
     if (max_depth >= 0 && current_depth > max_depth) {
         return 0;
     }
@@ -163,6 +253,7 @@ int scan_directory(const char *dir_path, int *file_count, int *dir_count,
     closedir(dir);
     return 0;
 }
+#endif
 
 void add_directory(const char *path, int max_depth) {
     char normalized[MAX_PATH_LENGTH];

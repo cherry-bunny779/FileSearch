@@ -14,13 +14,17 @@
 #include <locale.h>
 #include <sys/stat.h>
 #include <dirent.h>
-#include "../deps/sqlite3.h"
+#include "sqlite3.h"
 
 #ifdef _WIN32
     #include <windows.h>
     #include <direct.h>
     #define PATH_SEPARATOR '\\'
     #define PATH_SEPARATOR_STR "\\"
+    
+    /* Wide character conversion for Unicode path support */
+    wchar_t *utf8_to_wide(const char *utf8_str);
+    char *wide_to_utf8(const wchar_t *wide_str);
 #else
     #include <unistd.h>
     #include <pwd.h>
@@ -69,6 +73,9 @@ const char *get_filename_from_path(const char *path);
 
 /* Argument parsing */
 void parse_two_args(const char *input, char *arg1, size_t size1, char *arg2, size_t size2);
+
+/* UTF-8 line input (cross-platform) */
+char *read_utf8_line(char *buffer, size_t size, FILE *stream);
 
 /* Levenshtein distance */
 int levenshtein(const char *s1, const char *s2);

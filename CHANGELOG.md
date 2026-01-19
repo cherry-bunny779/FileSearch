@@ -283,7 +283,8 @@ tags (id, name)
 - ~~Non-recursive add option~~ → Fixed with `-d` depth flag
 - ~~Tags cannot be deleted~~ → Fixed with `delete-tag`, `rename-tag`, `prune-tags`
 - ~~Find command lacks fuzzy tag search~~ → Fixed with `--tag-fuzzy` flag
+- ~~Paths containing non-UTF8 characters cannot be added under some Windows configurations~~
 
 ### Remaining
-1. Non-UTF8 characters may appear as "?" on some Windows configurations
-   - Workaround: Use Windows Terminal with UTF-8 font
+- Non-UTF8 characters appear garbeled when returned from display functions
+- Revise schema to emphasize search by name instead of path
