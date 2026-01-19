@@ -2,10 +2,14 @@
 
 ## CLI Command Reference
 
-### v3 Commands (Current)
+### v4 Commands (Current)
 ```
 Path Commands:
-  add <directory>                    - Add directory recursively
+  add <directory> [-d N]             - Add directory to database
+                                       -d 0: directory only (no contents)
+                                       -d 1: immediate children only
+                                       -d N: recurse N levels deep
+                                       (omit -d for unlimited recursion)
   remove <path>                      - Remove path from database
   info <path>                        - Show path details
 
@@ -15,81 +19,29 @@ Search Commands:
   prefix <term>                      - Prefix match
   substring <term>                   - Substring match
   fuzzy <term> [n]                   - Fuzzy match
-  find --category <c> --tag <t> --name <n>
-                                     - Structured search
+  find [options]                     - Structured search with filters:
+       --category, -c <name>           Filter by category (exact)
+       --tag, -t <name>                Filter by tag (exact/substring)
+       --tag-fuzzy, -tf <name>         Filter by tag (fuzzy match)
+       --name, -n <term>               Filter by path name (substring)
+       --fuzzy-distance, -fd <n>       Set fuzzy distance (default: 3)
 
 Tag Commands:
   tag <path> <tagname>               - Add tag to path
   untag <path> <tagname>             - Remove tag from path
   tags [path]                        - List tags
   tagsearch <term>                   - Search tags
+  delete-tag <name>                  - Delete a tag completely
+  rename-tag <old> <new>             - Rename a tag
+  prune-tags                         - Remove all unused tags
 
 Category Commands:
   categorize <path> <category>       - Add category to path
   uncategorize <path> <category>     - Remove category
   categories [path]                  - List categories
   create-category <name>             - Create category
-
-Settings Commands:
-  set <key> <value>                  - Modify setting
-  get <key>                          - View setting
-  settings                           - List all settings
-
-Utility Commands:
-  stats                              - Database statistics
-  help                               - Show help
-  quit / exit                        - Exit program
-```
-
-
----
-
-## Compilation
-
-```bash
-# Version 3 (Current)
-gcc -o filesearch ./src/filesearch_v3.c ./deps/sqlite3.c
-```
-
-## Usage
-
-```bash
-# Default database location
-./filesearch
-
-# Custom database location
-./filesearch --db /path/to/custom.db
-```
-
-## Version 3: filesearch_v3.c (Categories, Tags & Settings) 
-```
-
-Path Commands:
-  add <directory>                    - Add directory recursively
-  remove <path>                      - Remove path from database
-  info <path>                        - Show path details
-
-Search Commands:
-  search <term>                      - All search methods
-  exact <term>                       - Exact match
-  prefix <term>                      - Prefix match
-  substring <term>                   - Substring match
-  fuzzy <term> [n]                   - Fuzzy match
-  find --category <c> --tag <t> --name <n>
-                                     - Structured search
-
-Tag Commands:
-  tag <path> <tagname>               - Add tag to path
-  untag <path> <tagname>             - Remove tag from path
-  tags [path]                        - List tags
-  tagsearch <term>                   - Search tags
-
-Category Commands:
-  categorize <path> <category>       - Add category to path
-  uncategorize <path> <category>     - Remove category
-  categories [path]                  - List categories
-
-  create-category <name>             - Create category
+  delete-category <name>             - Delete a category
+  rename-category <old> <new>        - Rename a category
 
 Settings Commands:
   set <key> <value>                  - Modify setting
@@ -107,119 +59,154 @@ Utility Commands:
 ## Compilation
 
 ```bash
-# Version 1
-gcc -o tagsearch tagsearch.c -lsqlite3
+# Build from src/ directory
+make -C src
 
-# Version 3 (Current)
-gcc -o filesearch filesearch_v2.c -lsqlite3
+# Clean build
+make -C src clean      # Remove application objects
+make -C src cleanall   # Remove all objects including SQLite
 ```
 
 ## Usage
 
 ```bash
-# Default database location
+# Default database location (~/.filesearch/filesearch.db)
 ./filesearch
 
 # Custom database location
 ./filesearch --db /path/to/custom.db
 ```
+
+---
+
+## Version 4: Code Library Reorganization & Issue Fixes
+
+### Code Reorganization
+- **Modular architecture**
+  - Split monolithic `filesearch_v3.c` into separate source files
+  - Header/implementation pairs for each module
+  - Clear separation of concerns
+
+- **Module breakdown**
+  | File | Purpose |
+  |------|---------|
+  | `main.c` | Entry point, CLI loop, command parsing |
+  | `utils.h/c` | String utilities, path handling, Levenshtein, UTF-8 |
+  | `database.h/c` | SQLite initialization, settings, schema, migrations |
+  | `paths.h/c` | Path CRUD, directory scanning with depth control |
+  | `tags.h/c` | Tag CRUD, delete, rename, prune, similarity checks |
+  | `categories.h/c` | Category CRUD, path-category associations |
+  | `search.h/c` | Path search, structured search with fuzzy tag support |
+
+### Cross-Platform Makefile
+- **OS detection**
+  - Automatic detection of Windows, macOS, and Linux
+  - Platform-specific linker flags (`-ldl` for Linux only)
+  - Platform-specific executable name (`.exe` for Windows)
+  
+- **Build environments**
+  - Native Windows (cmd.exe) with `del` command
+  - MSYS2/MinGW with Unix-style `rm`
+  - macOS and Linux with standard tools
+
+- **SQLite amalgamation**
+  - Compiles `sqlite3.c` from `../deps/` directory
+  - Warning suppression for SQLite source (`-Wno-unused-parameter`, `-Wno-unused-but-set-variable`)
+  - Separate `cleanall` target for SQLite object
 
 ### New Features
 
-#### Database-Stored Settings
-- **Settings table**
-  - Key-value storage for configuration
-  - Replaces compile-time macros for runtime values
-  
-- **Default settings**
-  - `schema_version`: 1
-  - `app_version`: 1
-  - `similarity_threshold`: 3
-  - `max_results`: 20
-  - `fuzzy_default_distance`: 3
+#### Depth-Controlled Directory Scanning (Issue #2 Fix)
+- **Depth flag for add command**
+  - `add <directory> -d 0` - Add directory only, no contents
+  - `add <directory> -d 1` - Add immediate children only
+  - `add <directory> -d N` - Recurse N levels deep
+  - `add <directory>` - Unlimited recursion (default)
 
-- **Settings management**
-  - `get <key>` - View setting value
-  - `set <key> <value>` - Modify setting
-  - `settings` - List all settings
+- **Use case**
+  - Games folder: `add /Games -d 1` to add only game folders, not all internal files
 
-#### Schema Versioning & Migration
-- **Version tracking**
-  - Integer-based schema version
-  - Separate app version tracking
+#### Tag Deletion & Management (Issue #3 Fix)
+- **Delete tag command**
+  - `delete-tag <name>` - Completely remove a tag from database
+  - Prompts for confirmation if tag is in use
+  - Cascade removes all path-tag associations
 
-- **Migration system**
-  - Detects outdated databases
-  - Prompts user for confirmation before migration
-  - Assigns existing paths to "Uncategorized" category
+- **Rename tag command**
+  - `rename-tag <old> <new>` - Rename existing tag
+  - Checks for name conflicts before renaming
 
-#### Category System
-- **Categories table**
-  - Pre-populated defaults: Games, Music, Photos, Documents, Uncategorized
-  
-- **Many-to-many relationship**
-  - Paths can belong to multiple categories
-  - Junction table: `path_categories`
+- **Prune unused tags**
+  - `prune-tags` - Remove all tags with zero associations
+  - Lists unused tags before deletion
+  - Prompts for confirmation
 
-- **Category commands**
-  - `categorize <path> <category>` - Add category to path
-  - `uncategorize <path> <category>` - Remove category from path
-  - `categories` - List all categories
-  - `categories <path>` - List categories for specific path
-  - `create-category <name>` - Create new category
+#### Fuzzy Tag Search in Find Command (Issue #4 Fix)
+- **Fuzzy tag matching**
+  - `find --tag-fuzzy <name>` or `find -tf <name>`
+  - Uses Levenshtein distance for approximate matching
+  - Reports number of matching tags found
 
-#### Enhanced Tag System
-- **Tag similarity detection**
-  - Levenshtein distance check
-  - Substring match check
-  - Configurable threshold via settings
+- **Configurable fuzzy distance**
+  - `find --fuzzy-distance N` or `find -fd N`
+  - Default distance: 3 (from settings)
 
-- **Tag creation workflow**
-  - Warning when similar tag exists
-  - Option to use existing tag instead
-  - Option to proceed with new tag creation
+- **Example usage**
+  ```
+  find --tag-fuzzy valv           # Matches "valve", "vala", etc.
+  find -tf cod -fd 2              # Fuzzy search with distance 2
+  find -c Games -tf valv          # Combine with category filter
+  ```
 
-- **Tag commands**
-  - `tag <path> <tagname>` - Add tag to path (with similarity check)
-  - `untag <path> <tagname>` - Remove tag from path
-  - `tags` - List all tags
-  - `tags <path>` - List tags for specific path
-  - `tagsearch <term>` - Search tags (exact, substring, fuzzy)
+#### Category Management
+- **Delete category command**
+  - `delete-category <name>` - Remove category from database
+  - Prompts for confirmation if category is in use
 
-#### Structured Search
-- **Find command**
-  - `find --category <cat>` - Filter by category
-  - `find --tag <tag>` - Filter by tag
-  - `find --name <term>` - Filter by name (substring)
-  - Combinable: `find --category Games --tag code --name search`
+- **Rename category command**
+  - `rename-category <old> <new>` - Rename existing category
 
-- **Short flags**
-  - `-c` for `--category`
-  - `-t` for `--tag`
-  - `-n` for `--name`
+### Bug Fixes
+- **Stats output for tags**
+  - Fixed unused variable `tags_in_use` 
+  - Now displays: `Tags: X (Y in use)` consistent with categories
+  - Shows unused tag hint: `(N unused, run 'prune-tags' to remove)`
 
-#### Path Information
-- **Info command**
-  - `info <path>` - Display path details
-  - Shows: path, name, type, size, categories, tags
+### Schema (v4 - unchanged from v3)
+```sql
+paths (id, path, name, is_directory, size, parent_path)
+categories (id, name)
+path_categories (path_id, category_id)
+tags (id, name)
+path_tags (path_id, tag_id)
+settings (key, value)
+```
 
-#### Additional Improvements
-- **Remove command**
-  - `remove <path>` - Delete path from database
+### Default Settings
+| Key | Default | Description |
+|-----|---------|-------------|
+| `schema_version` | 2 | Database schema version |
+| `app_version` | 2 | Application version |
+| `similarity_threshold` | 3 | Tag similarity warning threshold |
+| `max_results` | 20 | Maximum search results |
+| `fuzzy_default_distance` | 3 | Default Levenshtein distance |
+| `default_scan_depth` | -1 | Default scan depth (-1 = unlimited) |
 
-- **Foreign key enforcement**
-  - `PRAGMA foreign_keys = ON`
-  - Cascade deletes for path removal
+---
 
-- **Additional indexes**
-  - `idx_path_categories_path`
-  - `idx_path_categories_cat`
-  - `idx_path_tags_path`
-  - `idx_path_tags_tag`
-  - `idx_category_name`
+## Version 3: filesearch_v2.c (Categories, Tags & Settings) 
+
+### Features
+- Database-stored settings with key-value storage
+- Schema versioning with migration support
+- Category system with many-to-many relationships
+- Enhanced tag system with similarity detection
+- Structured search with `find` command
+- Path information display with `info` command
+- Foreign key enforcement with cascade deletes
 
 ### Schema (v3)
-```
+```sql
 paths (id, path, name, is_directory, size, parent_path)
 categories (id, name)
 path_categories (path_id, category_id)
@@ -229,132 +216,74 @@ settings (key, value)
 ```
 
 ### Bug Fixes
-- **parse_two_args buffer overflow**
-  - Fixed incorrect size parameter usage
-  - Now accepts separate sizes for each argument
-
-### Retained from Previous Versions
-- All search algorithms (exact, prefix, substring, fuzzy)
-- Levenshtein implementation with SQLite registration
-- Cross-platform path handling
-- Directory scanning with recursion limit
-- Transaction wrapping for bulk operations
+- `parse_two_args` buffer overflow - fixed incorrect size parameter usage
 
 ---
 
-
 ## Version 2: filesearch.c (First Path Management Update)
 
-### New Features
-- **File-based SQLite storage**
-  - Persistent database file
-  - Default location: `~/.filesearch/filesearch.db`
-  - Custom path via `--db` flag
+### Features
+- File-based SQLite storage with persistent database
+- Cross-platform support (Windows/Unix)
+- Directory scanning with recursion limit
+- Path search functionality
+- Custom database path via `--db` flag
 
-- **Cross-platform support**
-  - Windows and Unix path handling
-  - Platform-specific home directory detection
-  - Conditional compilation for path separators
-
-- **Directory scanning**
-  - Recursive directory traversal
-  - Stores: path, name, is_directory, size, parent_path
-  - Depth limit (100) to prevent infinite recursion
-  - Transaction wrapping for bulk inserts
-
-- **Path search functionality**
-  - All search modes applied to path names
-  - Results display file type and size
-
-- **Directory validation**
-  - Check if database directory exists before opening
-  - Helpful error messages with platform-specific instructions
-
-### Schema
-```
+### Schema (v2)
+```sql
 paths (id, path, name, is_directory, size, parent_path)
 tags (id, name)
 path_tags (path_id, tag_id)
 ```
 
-### CLI Additions
-- `add <directory>` - Recursive directory scanning
-- `stats` - Database statistics
-- `--db <path>` - Custom database location
-- `--help` - Usage information
-
-### Retained from v1
-- Tag loading from file (test code)
-- All search algorithms
-- Levenshtein implementation
-
 ---
-
-
 
 ## Version 1: tagsearch.c (Initial Implementation)
 
-### Core Features
-- **In-memory SQLite database**
-  - Data stored only during program execution
-  - No persistence between sessions
+### Features
+- In-memory SQLite database (no persistence)
+- Tag loading from text file
+- Search: exact, prefix, substring, fuzzy (Levenshtein)
+- Interactive CLI
 
-- **Tag storage and search**
-  - Load tags from text file
-  - Single table schema (`tags`)
-
-- **Search functionality**
-  - Exact match (case-insensitive)
-  - Prefix match (`LIKE 'term%'`)
-  - Substring match (`LIKE '%term%'`)
-  - Fuzzy match (Levenshtein distance)
-
-- **Levenshtein distance implementation**
-  - Custom C implementation
-  - Space-optimized O(min(m,n)) using two-row technique
-  - Case-insensitive comparison
-  - Registered as SQLite custom function
-
-- **Interactive CLI**
-  - Commands: `search`, `exact`, `prefix`, `substring`, `fuzzy`, `list`, `help`, `quit`
-  - Configurable max distance for fuzzy search
-
-### Limitations
-- No file/folder path management
-- No persistent storage
-- No categories
-- No path-tag associations
-- Hardcoded configuration values (macros)
+### Schema (v1)
+```sql
+tags (id, name)
+```
 
 ---
 
 ## Feature Comparison Matrix
 
-| Feature | v1 (tagsearch) | v2 (filesearch) | v3 (filesearch_v2) |
-|---------|----------------|-----------------|---------------------|
-| Persistent storage | ✗ | ✓ | ✓ |
-| Path management | ✗ | ✓ | ✓ |
-| Tag storage | ✓ | ✓ | ✓ |
-| Path-tag association | ✗ | Schema only | ✓ |
-| Categories | ✗ | ✗ | ✓ |
-| Path-category association | ✗ | ✗ | ✓ |
-| Tag similarity warning | ✗ | ✗ | ✓ |
-| Substring similarity check | ✗ | ✗ | ✓ |
-| Database settings | ✗ | ✗ | ✓ |
-| Schema versioning | ✗ | ✗ | ✓ |
-| Migration prompts | ✗ | ✗ | ✓ |
-| Structured search | ✗ | ✗ | ✓ |
-| Cross-platform | ✗ | ✓ | ✓ |
-| Custom DB path | ✗ | ✓ | ✓ |
+| Feature | v1 | v2 | v3 | v4 |
+|---------|----|----|----|----|
+| Persistent storage | ✗ | ✓ | ✓ | ✓ |
+| Path management | ✗ | ✓ | ✓ | ✓ |
+| Depth-controlled scanning | ✗ | ✗ | ✗ | ✓ |
+| Tag storage | ✓ | ✓ | ✓ | ✓ |
+| Tag deletion/rename | ✗ | ✗ | ✗ | ✓ |
+| Prune unused tags | ✗ | ✗ | ✗ | ✓ |
+| Path-tag association | ✗ | Schema | ✓ | ✓ |
+| Categories | ✗ | ✗ | ✓ | ✓ |
+| Category deletion/rename | ✗ | ✗ | ✗ | ✓ |
+| Tag similarity warning | ✗ | ✗ | ✓ | ✓ |
+| Database settings | ✗ | ✗ | ✓ | ✓ |
+| Schema versioning | ✗ | ✗ | ✓ | ✓ |
+| Structured search | ✗ | ✗ | ✓ | ✓ |
+| Fuzzy tag in find | ✗ | ✗ | ✗ | ✓ |
+| Cross-platform | ✗ | ✓ | ✓ | ✓ |
+| Modular codebase | ✗ | ✗ | ✗ | ✓ |
+| Cross-platform Makefile | ✗ | ✗ | ✗ | ✓ |
 
 ---
 
 ## Known Issues
-```
-1. Non-uft8 characters appear as "?"s and cannot be added as paths and tags (v3)
 
-2. Some items do not need recursive add (e.g. Games), as not all of the contents under the directory is important for searching purposes (v3)
+### Resolved in v4
+- ~~Non-recursive add option~~ → Fixed with `-d` depth flag
+- ~~Tags cannot be deleted~~ → Fixed with `delete-tag`, `rename-tag`, `prune-tags`
+- ~~Find command lacks fuzzy tag search~~ → Fixed with `--tag-fuzzy` flag
 
-3. Tags cannot be removed once created, although they can be unassigned to an item (v3)
-
-4. The "find" command does not incorporate tag search methods, making uncertain searches a multi-step process (v3)
+### Remaining
+1. Non-UTF8 characters may appear as "?" on some Windows configurations
+   - Workaround: Use Windows Terminal with UTF-8 font
