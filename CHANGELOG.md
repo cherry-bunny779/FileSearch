@@ -288,3 +288,6 @@ tags (id, name)
 ### Remaining
 - Non-UTF8 characters appear garbeled when returned from display functions
 - Revise schema to emphasize search by name instead of path
+- Upon adding an item, it must be added to "Uncategorized" immediately if category unassigned
+- Upon assigning to a category other than "Uncategorized", it should be removed from "Uncategorized"
+- Expand the SLI command "add" to assign category(ies) and tags upon initial addition
