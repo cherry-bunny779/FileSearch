@@ -15,18 +15,18 @@ static void print_path_result(sqlite3_stmt *stmt, int show_distance) {
     int is_dir = sqlite3_column_int(stmt, 1);
     
     if (is_dir) {
-        printf("  [DIR]  %s", path);
+        printf_utf8("  [DIR]  %s", path);
     } else {
         long long size = sqlite3_column_int64(stmt, 2);
-        printf("  [FILE] %s (%lld bytes)", path, size);
+        printf_utf8("  [FILE] %s (%lld bytes)", path, size);
     }
     
     if (show_distance) {
         int dist = sqlite3_column_int(stmt, 3);
-        printf(" (distance: %d)", dist);
+        printf_utf8(" (distance: %d)", dist);
     }
     
-    printf("\n");
+    printf_utf8("\n");
 }
 
 /* ============================================
@@ -163,6 +163,142 @@ void search_paths_all(const char *query) {
     search_paths_prefix(query);
     search_paths_substring(query);
     search_paths_fuzzy(query, -1);
+}
+
+/* ============================================
+ * Full Path Search (searches 'path' column)
+ * ============================================ */
+
+void search_fullpath_exact(const char *query) {
+    int max_results = get_int_setting("max_results", DEFAULT_MAX_RESULTS);
+    
+    sqlite3_stmt *stmt;
+    const char *sql = 
+        "SELECT path, is_directory, size FROM paths "
+        "WHERE path = ? COLLATE NOCASE LIMIT ?;";
+    
+    if (sqlite3_prepare_v2(db, sql, -1, &stmt, NULL) != SQLITE_OK) {
+        fprintf(stderr, "Query error: %s\n", sqlite3_errmsg(db));
+        return;
+    }
+    
+    sqlite3_bind_text(stmt, 1, query, -1, SQLITE_STATIC);
+    sqlite3_bind_int(stmt, 2, max_results);
+    
+    printf("\n[Exact Match - Full Path]\n");
+    int found = 0;
+    while (sqlite3_step(stmt) == SQLITE_ROW) {
+        print_path_result(stmt, 0);
+        found++;
+    }
+    
+    if (!found) {
+        printf("  (no exact matches)\n");
+    }
+    
+    sqlite3_finalize(stmt);
+}
+
+void search_fullpath_prefix(const char *query) {
+    int max_results = get_int_setting("max_results", DEFAULT_MAX_RESULTS);
+    
+    sqlite3_stmt *stmt;
+    const char *sql = 
+        "SELECT path, is_directory, size FROM paths "
+        "WHERE path LIKE ? || '%' COLLATE NOCASE LIMIT ?;";
+    
+    if (sqlite3_prepare_v2(db, sql, -1, &stmt, NULL) != SQLITE_OK) {
+        fprintf(stderr, "Query error: %s\n", sqlite3_errmsg(db));
+        return;
+    }
+    
+    sqlite3_bind_text(stmt, 1, query, -1, SQLITE_STATIC);
+    sqlite3_bind_int(stmt, 2, max_results);
+    
+    printf("\n[Prefix Match - Full Path]\n");
+    int found = 0;
+    while (sqlite3_step(stmt) == SQLITE_ROW) {
+        print_path_result(stmt, 0);
+        found++;
+    }
+    
+    if (!found) {
+        printf("  (no prefix matches)\n");
+    }
+    
+    sqlite3_finalize(stmt);
+}
+
+void search_fullpath_substring(const char *query) {
+    int max_results = get_int_setting("max_results", DEFAULT_MAX_RESULTS);
+    
+    sqlite3_stmt *stmt;
+    const char *sql = 
+        "SELECT path, is_directory, size FROM paths "
+        "WHERE path LIKE '%' || ? || '%' COLLATE NOCASE LIMIT ?;";
+    
+    if (sqlite3_prepare_v2(db, sql, -1, &stmt, NULL) != SQLITE_OK) {
+        fprintf(stderr, "Query error: %s\n", sqlite3_errmsg(db));
+        return;
+    }
+    
+    sqlite3_bind_text(stmt, 1, query, -1, SQLITE_STATIC);
+    sqlite3_bind_int(stmt, 2, max_results);
+    
+    printf("\n[Substring Match - Full Path]\n");
+    int found = 0;
+    while (sqlite3_step(stmt) == SQLITE_ROW) {
+        print_path_result(stmt, 0);
+        found++;
+    }
+    
+    if (!found) {
+        printf("  (no substring matches)\n");
+    }
+    
+    sqlite3_finalize(stmt);
+}
+
+void search_fullpath_fuzzy(const char *query, int max_distance) {
+    int max_results = get_int_setting("max_results", DEFAULT_MAX_RESULTS);
+    
+    if (max_distance < 0) {
+        max_distance = get_int_setting("fuzzy_default_distance", DEFAULT_FUZZY_DISTANCE);
+    }
+    
+    sqlite3_stmt *stmt;
+    const char *sql = 
+        "SELECT path, is_directory, size, levenshtein(path, ?) as dist "
+        "FROM paths WHERE dist <= ? ORDER BY dist, path LIMIT ?;";
+    
+    if (sqlite3_prepare_v2(db, sql, -1, &stmt, NULL) != SQLITE_OK) {
+        fprintf(stderr, "Query error: %s\n", sqlite3_errmsg(db));
+        return;
+    }
+    
+    sqlite3_bind_text(stmt, 1, query, -1, SQLITE_STATIC);
+    sqlite3_bind_int(stmt, 2, max_distance);
+    sqlite3_bind_int(stmt, 3, max_results);
+    
+    printf("\n[Fuzzy Match - Full Path (distance <= %d)]\n", max_distance);
+    int found = 0;
+    while (sqlite3_step(stmt) == SQLITE_ROW) {
+        print_path_result(stmt, 1);
+        found++;
+    }
+    
+    if (!found) {
+        printf("  (no fuzzy matches within distance %d)\n", max_distance);
+    }
+    
+    sqlite3_finalize(stmt);
+}
+
+void search_fullpath_all(const char *query) {
+    search_fullpath_exact(query);
+    search_fullpath_prefix(query);
+    search_fullpath_substring(query);
+    search_fullpath_fuzzy(query, -1);
 }
 
 /* ============================================

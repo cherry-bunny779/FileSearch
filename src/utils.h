@@ -68,6 +68,8 @@ int get_home_directory(char *buffer, size_t size);
 int get_default_db_path(char *buffer, size_t size);
 int directory_exists(const char *path);
 int file_exists(const char *path);
+long long get_file_size(const char *path);
+int is_regular_file(const char *path);
 void get_directory_from_path(const char *filepath, char *dir_buffer, size_t size);
 const char *get_filename_from_path(const char *path);
 
@@ -76,6 +78,11 @@ void parse_two_args(const char *input, char *arg1, size_t size1, char *arg2, siz
 
 /* UTF-8 line input (cross-platform) */
 char *read_utf8_line(char *buffer, size_t size, FILE *stream);
+
+/* UTF-8 print functions (cross-platform) */
+void print_utf8(const char *str);
+void println_utf8(const char *str);
+int printf_utf8(const char *format, ...);
 
 /* Levenshtein distance */
 int levenshtein(const char *s1, const char *s2);

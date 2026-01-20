@@ -35,16 +35,20 @@
 void print_help(void) {
     printf("\n");
     printf("Path Commands:\n");
-    printf("  add <directory> [-d N]        - Add directory to database\n");
+    printf("  add <path> [-d N] [-c cat...] [-t tag...]\n");
+    printf("                                - Add file or directory to database\n");
     printf("                                  -d N limits recursion depth (0=no recurse)\n");
+    printf("                                  -c assigns categories (must exist)\n");
+    printf("                                  -t assigns tags (created if needed)\n");
     printf("  remove <path>                 - Remove path from database\n");
     printf("  info <path>                   - Show path details with tags and categories\n");
     printf("\n");
     printf("Search Commands:\n");
-    printf("  search <term>                 - Search paths by name (all methods)\n");
-    printf("  exact <term>                  - Exact match on path names\n");
-    printf("  prefix <term>                 - Prefix match on path names\n");
-    printf("  substring <term>              - Substring match on path names\n");
+    printf("  search <term>                 - Search by filename (all methods)\n");
+    printf("  search-path <term>            - Search by full path (all methods)\n");
+    printf("  exact <term>                  - Exact match on names\n");
+    printf("  prefix <term>                 - Prefix match on names\n");
+    printf("  substring <term>              - Substring match on names\n");
     printf("  fuzzy <term> [n]              - Fuzzy match with max distance n\n");
     printf("  find [options]                - Structured search with filters:\n");
     printf("       --category, -c <name>      Filter by category (exact)\n");
@@ -104,46 +108,112 @@ void print_usage(const char *program_name) {
  * CLI Command Parsing
  * ============================================ */
 
+#define MAX_CATEGORIES 16
+#define MAX_TAGS 32
+
+typedef struct {
+    char path[MAX_PATH_LENGTH];
+    int max_depth;
+    char categories[MAX_CATEGORIES][MAX_TAG_LENGTH];
+    int category_count;
+    char tags[MAX_TAGS][MAX_TAG_LENGTH];
+    int tag_count;
+} AddArgs;
+
 /*
+ * Parse 'add' command arguments.
+ * Syntax: add <path> [-d depth] [-c cat1 cat2 ...] [-t tag1 tag2 ...]
+ */
+void parse_add_args_full(const char *args, AddArgs *result) {
+    /* Initialize result */
+    result->path[0] = '\0';
+    result->max_depth = get_int_setting("default_scan_depth", DEFAULT_SCAN_DEPTH);
+    result->category_count = 0;
+    result->tag_count = 0;
+    
+    if (!args || strlen(args) == 0) {
+        return;
+    }
+    
+    char args_copy[MAX_INPUT_LENGTH * 2];
+    strncpy(args_copy, args, sizeof(args_copy) - 1);
+    args_copy[sizeof(args_copy) - 1] = '\0';
+    
+    /* Tokenize and parse */
+    char *tokens[128];
+    int token_count = 0;
+    
+    char *token = strtok(args_copy, " ");
+    while (token && token_count < 128) {
+        tokens[token_count++] = token;
+        token = strtok(NULL, " ");
+    }
+    
+    /* Parse mode: 0=path, 1=depth, 2=categories, 3=tags */
+    int mode = 0;
+    
+    for (int i = 0; i < token_count; i++) {
+        if (strcmp(tokens[i], "-d") == 0) {
+            mode = 1;  /* Next token is depth value */
+        } else if (strcmp(tokens[i], "-c") == 0) {
+            mode = 2;  /* Following tokens are categories until another flag */
+        } else if (strcmp(tokens[i], "-t") == 0) {
+            mode = 3;  /* Following tokens are tags until another flag */
+        } else if (tokens[i][0] == '-' && (tokens[i][1] == 'd' || tokens[i][1] == 'c' || tokens[i][1] == 't')) {
+            /* Handle combined flags like -d0 */
+            if (tokens[i][1] == 'd' && tokens[i][2] != '\0') {
+                result->max_depth = atoi(&tokens[i][2]);
+                if (result->max_depth < 0) result->max_depth = 0;
+                mode = 0;
+            }
+        } else {
+            /* Regular token - interpret based on mode */
+            switch (mode) {
+                case 0:  /* Path */
+                    if (result->path[0] == '\0') {
+                        strncpy(result->path, tokens[i], sizeof(result->path) - 1);
+                        result->path[sizeof(result->path) - 1] = '\0';
+                    }
+                    break;
+                case 1:  /* Depth value */
+                    result->max_depth = atoi(tokens[i]);
+                    if (result->max_depth < 0) result->max_depth = 0;
+                    mode = 0;  /* Return to path mode (though path should already be set) */
+                    break;
+                case 2:  /* Category */
+                    if (result->category_count < MAX_CATEGORIES) {
+                        strncpy(result->categories[result->category_count], tokens[i], 
+                                MAX_TAG_LENGTH - 1);
+                        result->categories[result->category_count][MAX_TAG_LENGTH - 1] = '\0';
+                        result->category_count++;
+                    }
+                    break;
+                case 3:  /* Tag */
+                    if (result->tag_count < MAX_TAGS) {
+                        strncpy(result->tags[result->tag_count], tokens[i], 
+                                MAX_TAG_LENGTH - 1);
+                        result->tags[result->tag_count][MAX_TAG_LENGTH - 1] = '\0';
+                        result->tag_count++;
+                    }
+                    break;
+            }
+        }
+    }
+}
+
+/*
+ * Legacy wrapper for backward compatibility.
  * Parse 'add' command arguments for optional depth flag.
  * Returns max_depth (-1 for unlimited, or specified value).
  */
 int parse_add_args(const char *args, char *path, size_t path_size) {
-    int max_depth = get_int_setting("default_scan_depth", DEFAULT_SCAN_DEPTH);
+    AddArgs result;
+    parse_add_args_full(args, &result);
     
-    path[0] = '\0';
-    
-    char args_copy[MAX_INPUT_LENGTH];
-    strncpy(args_copy, args, sizeof(args_copy) - 1);
-    args_copy[sizeof(args_copy) - 1] = '\0';
-    
-    /* Look for -d flag */
-    char *depth_flag = strstr(args_copy, " -d ");
-    if (!depth_flag) {
-        depth_flag = strstr(args_copy, " -d");
-        if (depth_flag && depth_flag[3] == '\0') {
-            /* -d at end with no value - invalid */
-            depth_flag = NULL;
-        }
-    }
-    
-    if (depth_flag) {
-        /* Parse depth value */
-        char *value_start = depth_flag + 4;
-        while (*value_start == ' ') value_start++;
-        max_depth = atoi(value_start);
-        if (max_depth < 0) max_depth = 0;
-        
-        /* Remove -d and value from path */
-        *depth_flag = '\0';
-    }
-    
-    /* Copy remaining as path */
-    strncpy(path, args_copy, path_size - 1);
+    strncpy(path, result.path, path_size - 1);
     path[path_size - 1] = '\0';
-    trim_whitespace(path);
     
-    return max_depth;
+    return result.max_depth;
 }
 
 /* ============================================
@@ -206,18 +276,42 @@ void run_interactive_cli(void) {
         }
         else if (strcmp(command, "add") == 0) {
             if (strlen(argument) == 0) {
-                printf("Usage: add <directory> [-d depth]\n");
-                printf("  -d 0   Add directory only (no contents)\n");
-                printf("  -d 1   Add immediate children only\n");
-                printf("  -d N   Recurse N levels deep\n");
-                printf("  (omit -d for unlimited recursion)\n");
+                printf("Usage: add <path> [-d depth] [-c category...] [-t tag...]\n");
+                printf("  For directories:\n");
+                printf("    -d 0   Add directory only (no contents)\n");
+                printf("    -d 1   Add immediate children only\n");
+                printf("    -d N   Recurse N levels deep\n");
+                printf("    (omit -d for unlimited recursion)\n");
+                printf("  For files:\n");
+                printf("    -d flag is ignored\n");
+                printf("  Optional:\n");
+                printf("    -c Cat1 Cat2 ...  Assign categories (must exist)\n");
+                printf("    -t tag1 tag2 ...  Assign tags (created if needed)\n");
             } else {
-                char path[MAX_PATH_LENGTH];
-                int depth = parse_add_args(argument, path, sizeof(path));
-                if (strlen(path) > 0) {
-                    add_directory(path, depth);
+                AddArgs add_args;
+                parse_add_args_full(argument, &add_args);
+                
+                if (strlen(add_args.path) > 0) {
+                    if (add_args.category_count > 0 || add_args.tag_count > 0) {
+                        /* Convert arrays to pointer arrays for the function call */
+                        const char *cat_ptrs[MAX_CATEGORIES];
+                        const char *tag_ptrs[MAX_TAGS];
+                        
+                        for (int i = 0; i < add_args.category_count; i++) {
+                            cat_ptrs[i] = add_args.categories[i];
+                        }
+                        for (int i = 0; i < add_args.tag_count; i++) {
+                            tag_ptrs[i] = add_args.tags[i];
+                        }
+                        
+                        add_path_with_metadata(add_args.path, add_args.max_depth,
+                                               cat_ptrs, add_args.category_count,
+                                               tag_ptrs, add_args.tag_count);
+                    } else {
+                        add_path(add_args.path, add_args.max_depth);
+                    }
                 } else {
-                    printf("Usage: add <directory> [-d depth]\n");
+                    printf("Usage: add <path> [-d depth] [-c category...] [-t tag...]\n");
                 }
             }
         }
@@ -240,6 +334,13 @@ void run_interactive_cli(void) {
                 printf("Usage: search <term>\n");
             } else {
                 search_paths_all(argument);
+            }
+        }
+        else if (strcmp(command, "search-path") == 0) {
+            if (strlen(argument) == 0) {
+                printf("Usage: search-path <term>\n");
+            } else {
+                search_fullpath_all(argument);
             }
         }
         else if (strcmp(command, "exact") == 0) {

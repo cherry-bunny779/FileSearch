@@ -2,22 +2,23 @@
 
 ## CLI Command Reference
 
-### v4 Commands (Current)
+### v4.1 Commands (Current)
 ```
 Path Commands:
-  add <directory> [-d N]             - Add directory to database
-                                       -d 0: directory only (no contents)
-                                       -d 1: immediate children only
-                                       -d N: recurse N levels deep
-                                       (omit -d for unlimited recursion)
+  add <path> [-d N] [-c cat...] [-t tag...]
+                                     - Add file or directory to database
+                                       -d N: recursion depth (0=no contents)
+                                       -c: assign categories (must exist)
+                                       -t: assign tags (created if needed)
   remove <path>                      - Remove path from database
   info <path>                        - Show path details
 
 Search Commands:
-  search <term>                      - All search methods
-  exact <term>                       - Exact match
-  prefix <term>                      - Prefix match
-  substring <term>                   - Substring match
+  search <term>                      - Search by filename (all methods)
+  search-path <term>                 - Search by full path (all methods)
+  exact <term>                       - Exact match on names
+  prefix <term>                      - Prefix match on names
+  substring <term>                   - Substring match on names
   fuzzy <term> [n]                   - Fuzzy match
   find [options]                     - Structured search with filters:
        --category, -c <name>           Filter by category (exact)
@@ -284,10 +285,15 @@ tags (id, name)
 - ~~Tags cannot be deleted~~ → Fixed with `delete-tag`, `rename-tag`, `prune-tags`
 - ~~Find command lacks fuzzy tag search~~ → Fixed with `--tag-fuzzy` flag
 - ~~Paths containing non-UTF8 characters cannot be added under some Windows configurations~~
+- ~~Non-UTF8 characters appear garbeled when returned from display functions~~
+- ~~Fixed depth recusion issue in the add command, where "-d 0" still results in 1 level of recusion~~
 
-### Remaining
-- Non-UTF8 characters appear garbeled when returned from display functions
-- Revise schema to emphasize search by name instead of path
-- Upon adding an item, it must be added to "Uncategorized" immediately if category unassigned
-- Upon assigning to a category other than "Uncategorized", it should be removed from "Uncategorized"
-- Expand the SLI command "add" to assign category(ies) and tags upon initial addition
+### Resolved in v4.1
+- ~~Implement search by name in addition to search by path, and make search by name scheme the default invoked by the command "search"~~
+- ~~Upon adding an item, it must be added to "Uncategorized" immediately if category unassigned~~
+- ~~Upon assigning to a category other than "Uncategorized", it should be removed from "Uncategorized" (upon assigning a a category, make an additional check if the item is already assigned to "Uncategorized". If so, remove "Uncategorized" and proceed with assigning the category)~~
+- ~~Expand the SLI command "add" with additional parameters to assign category(ies) and tags upon initial addition~~
+- ~~Currently cannot add a file by its path. Can only add the file to the database by adding its parent directory with depth of 1~~
+
+### Remaining/Intruduced as of v4.1
+- Paths and file names containing non-Chs/Jp spaces cannot be added

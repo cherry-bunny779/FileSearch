@@ -4,6 +4,8 @@
 
 #include "paths.h"
 #include "database.h"
+#include "categories.h"
+#include "tags.h"
 
 #ifdef _WIN32
 #include <wchar.h>
@@ -67,13 +69,26 @@ int add_path_to_db(const char *path, const char *name, int is_directory,
     int rc = sqlite3_step(stmt);
     sqlite3_finalize(stmt);
     
-    return (rc == SQLITE_DONE) ? 0 : -1;
+    if (rc != SQLITE_DONE) {
+        return -1;
+    }
+    
+    /* Check if a row was actually inserted (not ignored due to duplicate) */
+    if (sqlite3_changes(db) > 0) {
+        /* Get the path_id and assign Uncategorized category */
+        int path_id = get_path_id(path);
+        if (path_id >= 0) {
+            assign_uncategorized(path_id);
+        }
+    }
+    
+    return 0;
 }
 
 int remove_path_from_db(const char *path) {
     int path_id = get_path_id(path);
     if (path_id < 0) {
-        fprintf(stderr, "Path not found in database: %s\n", path);
+        printf_utf8("Path not found in database: %s\n", path);
         return -1;
     }
     
@@ -89,7 +104,7 @@ int remove_path_from_db(const char *path) {
     sqlite3_finalize(stmt);
     
     if (rc == SQLITE_DONE) {
-        printf("Removed: %s\n", path);
+        printf_utf8("Removed: %s\n", path);
         return 0;
     }
     return -1;
@@ -121,7 +136,8 @@ int scan_directory(const char *dir_path, int *file_count, int *dir_count,
     }
     
     /* Check user-specified depth limit */
-    if (max_depth >= 0 && current_depth > max_depth) {
+    /* max_depth 0 means don't scan contents, 1 means scan one level, etc. */
+    if (max_depth >= 0 && current_depth >= max_depth) {
         return 0;
     }
     
@@ -207,7 +223,8 @@ int scan_directory(const char *dir_path, int *file_count, int *dir_count,
     }
     
     /* Check user-specified depth limit */
-    if (max_depth >= 0 && current_depth > max_depth) {
+    /* max_depth 0 means don't scan contents, 1 means scan one level, etc. */
+    if (max_depth >= 0 && current_depth >= max_depth) {
         return 0;
     }
     
@@ -267,17 +284,17 @@ void add_directory(const char *path, int max_depth) {
     }
     
     if (!directory_exists(normalized)) {
-        fprintf(stderr, "Error: '%s' is not a valid directory.\n", normalized);
+        printf_utf8("Error: '%s' is not a valid directory.\n", normalized);
         return;
     }
     
     /* Display appropriate message based on depth */
     if (max_depth == 0) {
-        printf("Adding directory (no recursion): %s\n", normalized);
+        printf_utf8("Adding directory (no recursion): %s\n", normalized);
     } else if (max_depth > 0) {
-        printf("Scanning directory (depth %d): %s\n", max_depth, normalized);
+        printf_utf8("Scanning directory (depth %d): %s\n", max_depth, normalized);
     } else {
-        printf("Scanning directory (unlimited depth): %s\n", normalized);
+        printf_utf8("Scanning directory (unlimited depth): %s\n", normalized);
     }
     
     sqlite3_exec(db, "BEGIN TRANSACTION;", NULL, NULL, NULL);
@@ -294,7 +311,134 @@ void add_directory(const char *path, int max_depth) {
     
     sqlite3_exec(db, "COMMIT;", NULL, NULL, NULL);
     
-    printf("Added %d files and %d directories.\n\n", file_count, dir_count);
+    printf_utf8("Added %d files and %d directories.\n\n", file_count, dir_count);
+}
+
+/* ============================================
+ * Single File Addition
+ * ============================================ */
+
+int add_file(const char *path) {
+    char normalized[MAX_PATH_LENGTH];
+    strncpy(normalized, path, sizeof(normalized) - 1);
+    normalized[sizeof(normalized) - 1] = '\0';
+    
+    /* Remove trailing slashes (shouldn't be there for files, but just in case) */
+    size_t len = strlen(normalized);
+    while (len > 1 && (normalized[len-1] == '/' || normalized[len-1] == '\\')) {
+        normalized[--len] = '\0';
+    }
+    
+    if (!is_regular_file(normalized)) {
+        printf_utf8("Error: '%s' is not a valid file.\n", normalized);
+        return -1;
+    }
+    
+    /* Get file info */
+    const char *name = get_filename_from_path(normalized);
+    long long size = get_file_size(normalized);
+    
+    /* Get parent directory path */
+    char parent_path[MAX_PATH_LENGTH];
+    get_directory_from_path(normalized, parent_path, sizeof(parent_path));
+    
+    /* Add to database */
+    int result = add_path_to_db(normalized, name, 0, size, parent_path);
+    
+    if (result == 0) {
+        printf_utf8("Added file: %s\n", normalized);
+    }
+    
+    return result;
+}
+
+/* ============================================
+ * Unified Add (auto-detects file vs directory)
+ * ============================================ */
+
+void add_path(const char *path, int max_depth) {
+    char normalized[MAX_PATH_LENGTH];
+    strncpy(normalized, path, sizeof(normalized) - 1);
+    normalized[sizeof(normalized) - 1] = '\0';
+    
+    /* Remove trailing slashes */
+    size_t len = strlen(normalized);
+    while (len > 1 && (normalized[len-1] == '/' || normalized[len-1] == '\\')) {
+        normalized[--len] = '\0';
+    }
+    
+    if (directory_exists(normalized)) {
+        add_directory(normalized, max_depth);
+    } else if (is_regular_file(normalized)) {
+        /* Ignore -d flag for files */
+        add_file(normalized);
+    } else {
+        printf_utf8("Error: '%s' does not exist or is not accessible.\n", normalized);
+    }
+}
+
+/* ============================================
+ * Unified Add with Metadata
+ * ============================================ */
+
+void add_path_with_metadata(const char *path, int max_depth,
+                            const char **categories, int category_count,
+                            const char **tags, int tag_count) {
+    char normalized[MAX_PATH_LENGTH];
+    strncpy(normalized, path, sizeof(normalized) - 1);
+    normalized[sizeof(normalized) - 1] = '\0';
+    
+    /* Remove trailing slashes */
+    size_t len = strlen(normalized);
+    while (len > 1 && (normalized[len-1] == '/' || normalized[len-1] == '\\')) {
+        normalized[--len] = '\0';
+    }
+    
+    /* First, add the path normally */
+    add_path(normalized, max_depth);
+    
+    /* Get the path_id of the root path we just added */
+    int path_id = get_path_id(normalized);
+    if (path_id < 0) {
+        return;  /* Path wasn't added successfully */
+    }
+    
+    /* Apply categories (this will also remove Uncategorized if applicable) */
+    for (int i = 0; i < category_count; i++) {
+        if (categories[i] && categories[i][0] != '\0') {
+            int cat_id = get_category_id(categories[i]);
+            if (cat_id >= 0) {
+                categorize_path_by_id(path_id, cat_id);
+                
+                /* Remove Uncategorized if assigning a different category */
+                char lower_name[MAX_TAG_LENGTH];
+                strncpy(lower_name, categories[i], sizeof(lower_name) - 1);
+                lower_name[sizeof(lower_name) - 1] = '\0';
+                str_to_lower(lower_name);
+                
+                if (strcmp(lower_name, "uncategorized") != 0) {
+                    remove_uncategorized(path_id);
+                }
+                
+                printf_utf8("  Category: %s\n", categories[i]);
+            } else {
+                printf_utf8("  Category not found: %s (use 'create-category' first)\n", categories[i]);
+            }
+        }
+    }
+    
+    /* Apply tags */
+    for (int i = 0; i < tag_count; i++) {
+        if (tags[i] && tags[i][0] != '\0') {
+            /* Use tag_path_by_id for silent operation, but we need the path string */
+            /* We'll use get_or_create_tag_with_check for similarity checking */
+            int tag_id = get_or_create_tag_with_check(tags[i]);
+            if (tag_id >= 0) {
+                tag_path_by_id(path_id, tag_id);
+                printf_utf8("  Tag: %s\n", tags[i]);
+            }
+        }
+    }
 }
 
 /* ============================================
@@ -304,7 +448,7 @@ void add_directory(const char *path, int max_depth) {
 void show_path_info(const char *path) {
     int path_id = get_path_id(path);
     if (path_id < 0) {
-        fprintf(stderr, "Path not found in database: %s\n", path);
+        printf_utf8("Path not found in database: %s\n", path);
         return;
     }
     
@@ -319,20 +463,20 @@ void show_path_info(const char *path) {
     
     sqlite3_bind_int(stmt, 1, path_id);
     
-    printf("\n[Path Info]\n");
+    printf_utf8("\n[Path Info]\n");
     
     if (sqlite3_step(stmt) == SQLITE_ROW) {
         const char *full_path = (const char *)sqlite3_column_text(stmt, 0);
         const char *name = (const char *)sqlite3_column_text(stmt, 1);
         int is_dir = sqlite3_column_int(stmt, 2);
         
-        printf("  Path:        %s\n", full_path);
-        printf("  Name:        %s\n", name);
-        printf("  Type:        %s\n", is_dir ? "Directory" : "File");
+        printf_utf8("  Path:        %s\n", full_path);
+        printf_utf8("  Name:        %s\n", name);
+        printf_utf8("  Type:        %s\n", is_dir ? "Directory" : "File");
         
         if (!is_dir && sqlite3_column_type(stmt, 3) != SQLITE_NULL) {
             long long size = sqlite3_column_int64(stmt, 3);
-            printf("  Size:        %lld bytes\n", size);
+            printf_utf8("  Size:        %lld bytes\n", size);
         }
     }
     sqlite3_finalize(stmt);
@@ -358,7 +502,7 @@ void show_path_info(const char *path) {
             first = 0;
         }
         
-        printf("  Categories:  %s\n", strlen(categories) > 0 ? categories : "(none)");
+        printf_utf8("  Categories:  %s\n", strlen(categories) > 0 ? categories : "(none)");
         sqlite3_finalize(stmt);
     }
     
@@ -383,9 +527,9 @@ void show_path_info(const char *path) {
             first = 0;
         }
         
-        printf("  Tags:        %s\n", strlen(tags) > 0 ? tags : "(none)");
+        printf_utf8("  Tags:        %s\n", strlen(tags) > 0 ? tags : "(none)");
         sqlite3_finalize(stmt);
     }
     
-    printf("\n");
+    printf_utf8("\n");
 }

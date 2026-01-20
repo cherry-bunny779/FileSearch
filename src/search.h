@@ -9,12 +9,19 @@
 
 #include "utils.h"
 
-/* Path search by name */
+/* Path search by name (searches the 'name' column - filename only) */
 void search_paths_exact(const char *query);
 void search_paths_prefix(const char *query);
 void search_paths_substring(const char *query);
 void search_paths_fuzzy(const char *query, int max_distance);
 void search_paths_all(const char *query);
+
+/* Path search by full path (searches the 'path' column - full path) */
+void search_fullpath_exact(const char *query);
+void search_fullpath_prefix(const char *query);
+void search_fullpath_substring(const char *query);
+void search_fullpath_fuzzy(const char *query, int max_distance);
+void search_fullpath_all(const char *query);
 
 /* Structured search filters */
 typedef struct {

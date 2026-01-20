@@ -312,7 +312,7 @@ int get_or_create_tag_with_check(const char *tag_name) {
 int tag_path(const char *path, const char *tag_name) {
     int path_id = get_path_id(path);
     if (path_id < 0) {
-        fprintf(stderr, "Path not found in database: %s\n", path);
+        printf_utf8("Path not found in database: %s\n", path);
         return -1;
     }
     
@@ -346,7 +346,7 @@ int tag_path(const char *path, const char *tag_name) {
                 sqlite3_finalize(name_stmt);
             }
             
-            printf("Path already has tag '%s'.\n", actual_name);
+            printf_utf8("Path already has tag '%s'.\n", actual_name);
             return 0;
         }
         sqlite3_finalize(check_stmt);
@@ -381,7 +381,7 @@ int tag_path(const char *path, const char *tag_name) {
             sqlite3_finalize(name_stmt);
         }
         
-        printf("Tagged: %s [%s]\n", path, actual_name);
+        printf_utf8("Tagged: %s [%s]\n", path, actual_name);
         return 0;
     }
     return -1;
@@ -390,13 +390,13 @@ int tag_path(const char *path, const char *tag_name) {
 int untag_path(const char *path, const char *tag_name) {
     int path_id = get_path_id(path);
     if (path_id < 0) {
-        fprintf(stderr, "Path not found in database: %s\n", path);
+        printf_utf8("Path not found in database: %s\n", path);
         return -1;
     }
     
     int tag_id = get_tag_id(tag_name);
     if (tag_id < 0) {
-        fprintf(stderr, "Tag not found: %s\n", tag_name);
+        printf_utf8("Tag not found: %s\n", tag_name);
         return -1;
     }
     
@@ -414,10 +414,31 @@ int untag_path(const char *path, const char *tag_name) {
     sqlite3_finalize(stmt);
     
     if (rc == SQLITE_DONE) {
-        printf("Untagged: %s [%s]\n", path, tag_name);
+        printf_utf8("Untagged: %s [%s]\n", path, tag_name);
         return 0;
     }
     return -1;
+}
+
+/*
+ * Tag a path by ID (silent, no output).
+ * Used internally for bulk operations.
+ */
+int tag_path_by_id(int path_id, int tag_id) {
+    sqlite3_stmt *stmt;
+    const char *sql = "INSERT OR IGNORE INTO path_tags (path_id, tag_id) VALUES (?, ?);";
+    
+    if (sqlite3_prepare_v2(db, sql, -1, &stmt, NULL) != SQLITE_OK) {
+        return -1;
+    }
+    
+    sqlite3_bind_int(stmt, 1, path_id);
+    sqlite3_bind_int(stmt, 2, tag_id);
+    
+    int rc = sqlite3_step(stmt);
+    sqlite3_finalize(stmt);
+    
+    return (rc == SQLITE_DONE) ? 0 : -1;
 }
 
 /* ============================================

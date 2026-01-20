@@ -26,6 +26,7 @@ int get_or_create_tag_with_check(const char *tag_name);
 /* Path-tag associations */
 int tag_path(const char *path, const char *tag_name);
 int untag_path(const char *path, const char *tag_name);
+int tag_path_by_id(int path_id, int tag_id);  /* Silent, no output */
 
 /* Tag listing */
 void list_all_tags(void);

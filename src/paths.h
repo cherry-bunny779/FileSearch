@@ -24,6 +24,17 @@ int scan_directory(const char *dir_path, int *file_count, int *dir_count,
                    int current_depth, int max_depth);
 void add_directory(const char *path, int max_depth);
 
+/* Single file addition */
+int add_file(const char *path);
+
+/* Unified add (auto-detects file vs directory) */
+void add_path(const char *path, int max_depth);
+
+/* Unified add with categories and tags */
+void add_path_with_metadata(const char *path, int max_depth,
+                            const char **categories, int category_count,
+                            const char **tags, int tag_count);
+
 /* Path information display */
 void show_path_info(const char *path);
 

@@ -203,6 +203,48 @@ int file_exists(const char *path) {
 #endif
 }
 
+long long get_file_size(const char *path) {
+#ifdef _WIN32
+    wchar_t *wide_path = utf8_to_wide(path);
+    if (!wide_path) return -1;
+    
+    struct _stat st;
+    long long size = -1;
+    if (_wstat(wide_path, &st) == 0 && !(st.st_mode & _S_IFDIR)) {
+        size = (long long)st.st_size;
+    }
+    free(wide_path);
+    return size;
+#else
+    struct stat st;
+    if (stat(path, &st) == 0 && S_ISREG(st.st_mode)) {
+        return (long long)st.st_size;
+    }
+    return -1;
+#endif
+}
+
+int is_regular_file(const char *path) {
+#ifdef _WIN32
+    wchar_t *wide_path = utf8_to_wide(path);
+    if (!wide_path) return 0;
+    
+    struct _stat st;
+    int result = 0;
+    if (_wstat(wide_path, &st) == 0) {
+        result = !(st.st_mode & _S_IFDIR);
+    }
+    free(wide_path);
+    return result;
+#else
+    struct stat st;
+    if (stat(path, &st) == 0) {
+        return S_ISREG(st.st_mode);
+    }
+    return 0;
+#endif
+}
+
 void get_directory_from_path(const char *filepath, char *dir_buffer, size_t size) {
     strncpy(dir_buffer, filepath, size - 1);
     dir_buffer[size - 1] = '\0';
@@ -317,6 +359,90 @@ char *read_utf8_line(char *buffer, size_t size, FILE *stream) {
  */
 char *read_utf8_line(char *buffer, size_t size, FILE *stream) {
     return fgets(buffer, (int)size, stream);
+}
+#endif
+
+/* ============================================
+ * UTF-8 Output
+ * ============================================ */
+
+#include <stdarg.h>
+
+#ifdef _WIN32
+/*
+ * Print a UTF-8 string to the Windows console.
+ * Converts to wide string and uses WriteConsoleW.
+ */
+void print_utf8(const char *str) {
+    if (!str) return;
+    
+    /* Get console output handle */
+    HANDLE hConsole = GetStdHandle(STD_OUTPUT_HANDLE);
+    if (hConsole == INVALID_HANDLE_VALUE) {
+        fputs(str, stdout);  /* Fallback */
+        return;
+    }
+    
+    /* Check if stdout is a console (not redirected) */
+    DWORD mode;
+    if (!GetConsoleMode(hConsole, &mode)) {
+        /* Not a console, use regular fputs */
+        fputs(str, stdout);
+        return;
+    }
+    
+    /* Convert UTF-8 to wide string */
+    wchar_t *wide_str = utf8_to_wide(str);
+    if (!wide_str) {
+        fputs(str, stdout);  /* Fallback */
+        return;
+    }
+    
+    /* Write to console */
+    DWORD written;
+    WriteConsoleW(hConsole, wide_str, (DWORD)wcslen(wide_str), &written, NULL);
+    free(wide_str);
+}
+
+void println_utf8(const char *str) {
+    print_utf8(str);
+    print_utf8("\n");
+}
+
+/*
+ * Printf-style function for UTF-8 output on Windows.
+ */
+int printf_utf8(const char *format, ...) {
+    char buffer[4096];
+    va_list args;
+    
+    va_start(args, format);
+    int len = vsnprintf(buffer, sizeof(buffer), format, args);
+    va_end(args);
+    
+    print_utf8(buffer);
+    return len;
+}
+
+#else
+/*
+ * On Unix/Linux/macOS, just use regular output functions.
+ */
+void print_utf8(const char *str) {
+    if (str) fputs(str, stdout);
+}
+
+void println_utf8(const char *str) {
+    if (str) puts(str);
+    else putchar('\n');
+}
+
+int printf_utf8(const char *format, ...) {
+    va_list args;
+    va_start(args, format);
+    int len = vprintf(format, args);
+    va_end(args);
+    return len;
 }
 #endif
 
