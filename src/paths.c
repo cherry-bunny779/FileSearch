@@ -110,6 +110,77 @@ int remove_path_from_db(const char *path) {
     return -1;
 }
 
+int remove_contents_under_path(const char *dir_path) {
+    char normalized[MAX_PATH_LENGTH];
+    strncpy(normalized, dir_path, sizeof(normalized) - 1);
+    normalized[sizeof(normalized) - 1] = '\0';
+    
+    /* Remove trailing slashes */
+    size_t len = strlen(normalized);
+    while (len > 1 && (normalized[len-1] == '/' || normalized[len-1] == '\\')) {
+        normalized[--len] = '\0';
+    }
+    
+    /* First, count how many items will be removed */
+    sqlite3_stmt *count_stmt;
+    const char *count_sql = 
+        "SELECT COUNT(*) FROM paths WHERE path LIKE ? || '%' AND path != ?;";
+    
+    if (sqlite3_prepare_v2(db, count_sql, -1, &count_stmt, NULL) != SQLITE_OK) {
+        fprintf(stderr, "Query error: %s\n", sqlite3_errmsg(db));
+        return -1;
+    }
+    
+    /* Build pattern: dir_path + separator */
+    char pattern[MAX_PATH_LENGTH];
+    snprintf(pattern, sizeof(pattern), "%s%s", normalized, PATH_SEPARATOR_STR);
+    
+    sqlite3_bind_text(count_stmt, 1, pattern, -1, SQLITE_STATIC);
+    sqlite3_bind_text(count_stmt, 2, normalized, -1, SQLITE_STATIC);
+    
+    int count = 0;
+    if (sqlite3_step(count_stmt) == SQLITE_ROW) {
+        count = sqlite3_column_int(count_stmt, 0);
+    }
+    sqlite3_finalize(count_stmt);
+    
+    if (count == 0) {
+        printf_utf8("No contents found under: %s\n", normalized);
+        return 0;
+    }
+    
+    /* Ask for confirmation */
+    printf_utf8("This will remove %d item(s) under: %s\n", count, normalized);
+    if (!get_confirmation("Proceed with removal?")) {
+        printf("Cancelled.\n");
+        return -1;
+    }
+    
+    /* Delete all paths under the directory */
+    sqlite3_stmt *delete_stmt;
+    const char *delete_sql = 
+        "DELETE FROM paths WHERE path LIKE ? || '%' AND path != ?;";
+    
+    if (sqlite3_prepare_v2(db, delete_sql, -1, &delete_stmt, NULL) != SQLITE_OK) {
+        fprintf(stderr, "Query error: %s\n", sqlite3_errmsg(db));
+        return -1;
+    }
+    
+    sqlite3_bind_text(delete_stmt, 1, pattern, -1, SQLITE_STATIC);
+    sqlite3_bind_text(delete_stmt, 2, normalized, -1, SQLITE_STATIC);
+    
+    int rc = sqlite3_step(delete_stmt);
+    sqlite3_finalize(delete_stmt);
+    
+    if (rc == SQLITE_DONE) {
+        int deleted = sqlite3_changes(db);
+        printf_utf8("Removed %d item(s) under: %s\n", deleted, normalized);
+        return deleted;
+    }
+    
+    return -1;
+}
+
 /* ============================================
  * Directory Scanning
  * ============================================ */

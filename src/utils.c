@@ -274,6 +274,20 @@ void parse_two_args(const char *input, char *arg1, size_t size1, char *arg2, siz
     arg1[0] = '\0';
     arg2[0] = '\0';
     
+    /* Handle quoted first argument */
+    const char *remainder = NULL;
+    if (extract_quoted_path(input, arg1, size1, &remainder) == 0 && remainder) {
+        /* Skip whitespace after first arg */
+        while (*remainder && isspace(*remainder)) remainder++;
+        if (*remainder) {
+            strncpy(arg2, remainder, size2 - 1);
+            arg2[size2 - 1] = '\0';
+            trim_whitespace(arg2);
+        }
+        return;
+    }
+    
+    /* Fallback to original behavior for backward compatibility */
     const char *last_space = strrchr(input, ' ');
     
     if (last_space) {
@@ -287,6 +301,73 @@ void parse_two_args(const char *input, char *arg1, size_t size1, char *arg2, siz
         arg2[size2 - 1] = '\0';
         trim_whitespace(arg2);
     }
+}
+
+/*
+ * Extract a path from input that may be quoted.
+ * Supports both double quotes ("path") and single quotes ('path').
+ * If not quoted, extracts until the first whitespace.
+ * 
+ * Returns: 0 on success, -1 on error (unclosed quote)
+ * Sets *remainder to point to the character after the path (and closing quote if any)
+ */
+int extract_quoted_path(const char *input, char *path, size_t path_size, const char **remainder) {
+    path[0] = '\0';
+    if (remainder) *remainder = NULL;
+    
+    if (!input || !path || path_size == 0) {
+        return -1;
+    }
+    
+    /* Skip leading whitespace */
+    const char *p = input;
+    while (*p && isspace(*p)) p++;
+    
+    if (*p == '\0') {
+        return -1;  /* Empty input */
+    }
+    
+    char quote_char = 0;
+    const char *start;
+    const char *end;
+    
+    /* Check for quoted string */
+    if (*p == '"' || *p == '\'') {
+        quote_char = *p;
+        start = p + 1;  /* Skip opening quote */
+        
+        /* Find closing quote */
+        end = strchr(start, quote_char);
+        if (!end) {
+            return -1;  /* Unclosed quote */
+        }
+        
+        /* Copy path content */
+        size_t len = end - start;
+        if (len >= path_size) len = path_size - 1;
+        strncpy(path, start, len);
+        path[len] = '\0';
+        
+        if (remainder) {
+            *remainder = end + 1;  /* Point past closing quote */
+        }
+    } else {
+        /* Unquoted - extract until whitespace */
+        start = p;
+        end = start;
+        while (*end && !isspace(*end)) end++;
+        
+        size_t len = end - start;
+        if (len >= path_size) len = path_size - 1;
+        strncpy(path, start, len);
+        path[len] = '\0';
+        
+        if (remainder) {
+            *remainder = end;
+        }
+    }
+    
+    return 0;
 }
 
 /* ============================================

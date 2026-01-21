@@ -16,6 +16,7 @@ int get_path_id(const char *path);
 int add_path_to_db(const char *path, const char *name, int is_directory, 
                    long long size, const char *parent_path);
 int remove_path_from_db(const char *path);
+int remove_contents_under_path(const char *dir_path);
 
 /* Directory scanning 
  * max_depth: -1 = unlimited, 0 = directory only (no contents), 1+ = levels to recurse

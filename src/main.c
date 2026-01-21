@@ -34,6 +34,8 @@
 
 void print_help(void) {
     printf("\n");
+    printf("Note: Use quotes for paths with spaces, e.g., \"C:\\Program Files\\App\"\n");
+    printf("\n");
     printf("Path Commands:\n");
     printf("  add <path> [-d N] [-c cat...] [-t tag...]\n");
     printf("                                - Add file or directory to database\n");
@@ -41,6 +43,7 @@ void print_help(void) {
     printf("                                  -c assigns categories (must exist)\n");
     printf("                                  -t assigns tags (created if needed)\n");
     printf("  remove <path>                 - Remove path from database\n");
+    printf("  remove-all <directory>        - Remove all contents under directory\n");
     printf("  info <path>                   - Show path details with tags and categories\n");
     printf("\n");
     printf("Search Commands:\n");
@@ -123,6 +126,7 @@ typedef struct {
 /*
  * Parse 'add' command arguments.
  * Syntax: add <path> [-d depth] [-c cat1 cat2 ...] [-t tag1 tag2 ...]
+ * Path can be quoted: add "C:\Program Files\Game" -d 0
  */
 void parse_add_args_full(const char *args, AddArgs *result) {
     /* Initialize result */
@@ -135,11 +139,29 @@ void parse_add_args_full(const char *args, AddArgs *result) {
         return;
     }
     
+    /* First, extract the path (possibly quoted) */
+    const char *remainder = NULL;
+    if (extract_quoted_path(args, result->path, sizeof(result->path), &remainder) != 0) {
+        return;  /* Failed to extract path */
+    }
+    
+    /* If no remainder, we're done */
+    if (!remainder || *remainder == '\0') {
+        return;
+    }
+    
+    /* Skip whitespace */
+    while (*remainder && isspace(*remainder)) remainder++;
+    if (*remainder == '\0') {
+        return;
+    }
+    
+    /* Parse remaining arguments */
     char args_copy[MAX_INPUT_LENGTH * 2];
-    strncpy(args_copy, args, sizeof(args_copy) - 1);
+    strncpy(args_copy, remainder, sizeof(args_copy) - 1);
     args_copy[sizeof(args_copy) - 1] = '\0';
     
-    /* Tokenize and parse */
+    /* Tokenize and parse flags */
     char *tokens[128];
     int token_count = 0;
     
@@ -149,7 +171,7 @@ void parse_add_args_full(const char *args, AddArgs *result) {
         token = strtok(NULL, " ");
     }
     
-    /* Parse mode: 0=path, 1=depth, 2=categories, 3=tags */
+    /* Parse mode: 1=depth, 2=categories, 3=tags */
     int mode = 0;
     
     for (int i = 0; i < token_count; i++) {
@@ -169,16 +191,10 @@ void parse_add_args_full(const char *args, AddArgs *result) {
         } else {
             /* Regular token - interpret based on mode */
             switch (mode) {
-                case 0:  /* Path */
-                    if (result->path[0] == '\0') {
-                        strncpy(result->path, tokens[i], sizeof(result->path) - 1);
-                        result->path[sizeof(result->path) - 1] = '\0';
-                    }
-                    break;
                 case 1:  /* Depth value */
                     result->max_depth = atoi(tokens[i]);
                     if (result->max_depth < 0) result->max_depth = 0;
-                    mode = 0;  /* Return to path mode (though path should already be set) */
+                    mode = 0;
                     break;
                 case 2:  /* Category */
                     if (result->category_count < MAX_CATEGORIES) {
@@ -195,6 +211,9 @@ void parse_add_args_full(const char *args, AddArgs *result) {
                         result->tags[result->tag_count][MAX_TAG_LENGTH - 1] = '\0';
                         result->tag_count++;
                     }
+                    break;
+                default:
+                    /* Ignore unexpected tokens */
                     break;
             }
         }
@@ -318,15 +337,41 @@ void run_interactive_cli(void) {
         else if (strcmp(command, "remove") == 0) {
             if (strlen(argument) == 0) {
                 printf("Usage: remove <path>\n");
+                printf("  Use quotes for paths with spaces: remove \"C:\\Program Files\\App\"\n");
             } else {
-                remove_path_from_db(argument);
+                char path[MAX_PATH_LENGTH];
+                if (extract_quoted_path(argument, path, sizeof(path), NULL) == 0 && path[0] != '\0') {
+                    remove_path_from_db(path);
+                } else {
+                    printf("Usage: remove <path>\n");
+                }
+            }
+        }
+        else if (strcmp(command, "remove-all") == 0) {
+            if (strlen(argument) == 0) {
+                printf("Usage: remove-all <directory>\n");
+                printf("  Removes all contents under the specified directory.\n");
+                printf("  The directory itself is NOT removed.\n");
+                printf("  Use quotes for paths with spaces.\n");
+            } else {
+                char path[MAX_PATH_LENGTH];
+                if (extract_quoted_path(argument, path, sizeof(path), NULL) == 0 && path[0] != '\0') {
+                    remove_contents_under_path(path);
+                } else {
+                    printf("Usage: remove-all <directory>\n");
+                }
             }
         }
         else if (strcmp(command, "info") == 0) {
             if (strlen(argument) == 0) {
                 printf("Usage: info <path>\n");
             } else {
-                show_path_info(argument);
+                char path[MAX_PATH_LENGTH];
+                if (extract_quoted_path(argument, path, sizeof(path), NULL) == 0 && path[0] != '\0') {
+                    show_path_info(path);
+                } else {
+                    printf("Usage: info <path>\n");
+                }
             }
         }
         else if (strcmp(command, "search") == 0) {
@@ -430,7 +475,12 @@ void run_interactive_cli(void) {
             if (strlen(argument) == 0) {
                 list_all_tags();
             } else {
-                list_path_tags(argument);
+                char path[MAX_PATH_LENGTH];
+                if (extract_quoted_path(argument, path, sizeof(path), NULL) == 0 && path[0] != '\0') {
+                    list_path_tags(path);
+                } else {
+                    list_all_tags();
+                }
             }
         }
         else if (strcmp(command, "tagsearch") == 0) {
@@ -494,7 +544,12 @@ void run_interactive_cli(void) {
             if (strlen(argument) == 0) {
                 list_all_categories();
             } else {
-                list_path_categories(argument);
+                char path[MAX_PATH_LENGTH];
+                if (extract_quoted_path(argument, path, sizeof(path), NULL) == 0 && path[0] != '\0') {
+                    list_path_categories(path);
+                } else {
+                    list_all_categories();
+                }
             }
         }
         else if (strcmp(command, "create-category") == 0) {
