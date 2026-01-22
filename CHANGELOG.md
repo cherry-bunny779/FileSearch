@@ -297,3 +297,4 @@ tags (id, name)
 
 ### Remaining/Intruduced as of v4.1
 - Paths and file names containing non-Chs/Jp spaces cannot be added
+- Add a batch remove funciton that removes all files/paths under the specified directory. 

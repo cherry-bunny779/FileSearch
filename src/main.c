@@ -12,6 +12,7 @@
  * - Tag management (create, delete, rename, prune)
  * - Database-stored settings with schema versioning
  * - Cross-platform support (Windows/macOS/Linux)
+ * - Command history with readline/libedit (macOS/Linux)
  * 
  * Compile:
  *   make
@@ -27,6 +28,18 @@
 #include "tags.h"
 #include "categories.h"
 #include "search.h"
+
+/* Readline support for command history and line editing */
+#ifdef USE_READLINE
+#ifdef USE_EDITLINE
+/* macOS with system libedit - use editline header */
+#include <editline/readline.h>
+#else
+/* GNU readline (Linux, or macOS with Homebrew readline) */
+#include <readline/readline.h>
+#include <readline/history.h>
+#endif
+#endif
 
 /* ============================================
  * CLI Help
@@ -239,16 +252,53 @@ int parse_add_args(const char *args, char *path, size_t path_size) {
  * Interactive CLI
  * ============================================ */
 
+#ifdef USE_READLINE
+/*
+ * Read a line using readline library (macOS/Linux).
+ * Provides command history and line editing with arrow keys.
+ */
+static char *cli_readline(const char *prompt) {
+    char *line = readline(prompt);
+    if (line && *line) {
+        add_history(line);
+    }
+    return line;
+}
+#endif
+
 void run_interactive_cli(void) {
-    char input[MAX_INPUT_LENGTH];
     char command[64];
     char argument[MAX_INPUT_LENGTH];
     
     printf("\nFileSearch v%d - Interactive CLI\n", 
            get_int_setting("app_version", DEFAULT_APP_VERSION));
-    printf("Type 'help' for available commands.\n\n");
+#ifdef USE_READLINE
+#ifdef USE_EDITLINE
+    printf("Type 'help' for available commands. (editline enabled)\n\n");
+#else
+    printf("Type 'help' for available commands. (readline enabled)\n\n");
+#endif
+#else
+    printf("Type 'help' for available commands.\n");
+    printf("(Tip: Rebuild with 'make' to enable arrow key support)\n\n");
+#endif
     
     while (1) {
+#ifdef USE_READLINE
+        /* Use readline for better line editing on macOS/Linux */
+        char *line = cli_readline("> ");
+        if (!line) {
+            printf("\n");
+            break;
+        }
+        
+        char input[MAX_INPUT_LENGTH];
+        strncpy(input, line, sizeof(input) - 1);
+        input[sizeof(input) - 1] = '\0';
+        free(line);
+#else
+        /* Standard input for Windows or when readline unavailable */
+        char input[MAX_INPUT_LENGTH];
         printf("> ");
         fflush(stdout);
         
@@ -256,6 +306,7 @@ void run_interactive_cli(void) {
             printf("\n");
             break;
         }
+#endif
         
         trim_whitespace(input);
         

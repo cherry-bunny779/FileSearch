@@ -3,14 +3,20 @@
 # Cross-platform build for Windows, macOS, and Linux
 #
 # Usage:
-#   make          - Build the program
-#   make clean    - Remove built files
-#   make debug    - Build with debug symbols
+#   make              - Build the program
+#   make clean        - Remove built files
+#   make debug        - Build with debug symbols
+#   make READLINE=no  - Build without readline support
 #
 # SQLite:
 #   Place sqlite3.c and sqlite3.h in the ../deps/ directory.
 #   Download from: https://www.sqlite.org/download.html (amalgamation)
 #
+
+# Readline support (enable by default on macOS/Linux)
+READLINE ?= yes
+# Default to editline on macOS, GNU readline elsewhere
+USE_EDITLINE ?= no
 
 # Detect operating system
 ifeq ($(OS),Windows_NT)
@@ -18,18 +24,44 @@ ifeq ($(OS),Windows_NT)
     TARGET = filesearch.exe
     RM = del /Q
     LDFLAGS = -lm
+    # Windows doesn't use readline by default
+    READLINE = no
+    READLINE_LIBS =
+    READLINE_INCLUDES =
     # For MSYS2/MinGW, override RM to use Unix-style rm
     ifdef MSYSTEM
         RM = rm -f
+        # MSYS2 can use readline if installed
+        READLINE = yes
+        READLINE_LIBS = -lreadline
     endif
 else
     UNAME_S := $(shell uname -s)
     ifeq ($(UNAME_S),Darwin)
         DETECTED_OS := macOS
         LDFLAGS = -lm
+        # Default: use system libedit (editline)
+        USE_EDITLINE = yes
+        READLINE_LIBS = -ledit
+        READLINE_INCLUDES =
+        # Check for Homebrew GNU readline (Intel Mac)
+        ifneq ($(wildcard /usr/local/opt/readline/lib/libreadline.dylib),)
+            USE_EDITLINE = no
+            READLINE_LIBS = -L/usr/local/opt/readline/lib -lreadline
+            READLINE_INCLUDES = -I/usr/local/opt/readline/include
+        endif
+        # Check for Homebrew GNU readline (Apple Silicon)
+        ifneq ($(wildcard /opt/homebrew/opt/readline/lib/libreadline.dylib),)
+            USE_EDITLINE = no
+            READLINE_LIBS = -L/opt/homebrew/opt/readline/lib -lreadline
+            READLINE_INCLUDES = -I/opt/homebrew/opt/readline/include
+        endif
     else
         DETECTED_OS := Linux
         LDFLAGS = -lpthread -ldl -lm
+        # Linux typically has GNU readline
+        READLINE_LIBS = -lreadline
+        READLINE_INCLUDES =
     endif
     TARGET = filesearch
     RM = rm -f
@@ -39,13 +71,23 @@ endif
 CC = gcc
 CFLAGS = -Wall -Wextra -std=c99
 
+# Add readline flags if enabled
+ifeq ($(READLINE),yes)
+    CFLAGS += -DUSE_READLINE $(READLINE_INCLUDES)
+    ifeq ($(USE_EDITLINE),yes)
+        CFLAGS += -DUSE_EDITLINE
+    endif
+    LDFLAGS += $(READLINE_LIBS)
+endif
+
 # Directories
 DEPS_DIR = ../deps
 
 # SQLite source (amalgamation)
 SQLITE_SRC = $(DEPS_DIR)/sqlite3.c
 SQLITE_OBJ = $(DEPS_DIR)/sqlite3.o
-SQLITE_FLAGS = -DSQLITE_THREADSAFE=1 -DSQLITE_ENABLE_FTS5
+SQLITE_FLAGS = -DSQLITE_THREADSAFE=1 -DSQLITE_ENABLE_FTS5 \
+               -Wno-unused-parameter -Wno-unused-but-set-variable
 
 # Source files
 SRCS = main.c utils.c database.c paths.c tags.c categories.c search.c
@@ -57,12 +99,21 @@ INCLUDES = -I$(DEPS_DIR)
 # Default target
 all: CFLAGS += -O2
 all: $(TARGET)
-	@echo "Built for $(DETECTED_OS)"
+	@echo "Built $(TARGET) for $(DETECTED_OS)"
+	@echo "  Readline: $(READLINE)"
+ifeq ($(READLINE),yes)
+ifeq ($(USE_EDITLINE),yes)
+	@echo "  Using: editline (system libedit)"
+else
+	@echo "  Using: GNU readline"
+endif
+endif
 
 # Debug build
 debug: CFLAGS += -g -DDEBUG
 debug: $(TARGET)
-	@echo "Debug build for $(DETECTED_OS)"
+	@echo "Debug build $(TARGET) for $(DETECTED_OS)"
+	@echo "  Readline: $(READLINE)"
 
 # Link
 $(TARGET): $(OBJS) $(SQLITE_OBJ)

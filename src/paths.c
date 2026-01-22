@@ -468,27 +468,24 @@ void add_path_with_metadata(const char *path, int max_depth,
     /* First, add the path normally */
     add_path(normalized, max_depth);
     
-    /* Get the path_id of the root path we just added */
-    int path_id = get_path_id(normalized);
-    if (path_id < 0) {
-        return;  /* Path wasn't added successfully */
-    }
+    /* Pre-resolve category IDs and check validity */
+    int cat_ids[16];
+    int valid_cat_count = 0;
+    int has_non_uncategorized = 0;
     
-    /* Apply categories (this will also remove Uncategorized if applicable) */
-    for (int i = 0; i < category_count; i++) {
+    for (int i = 0; i < category_count && i < 16; i++) {
         if (categories[i] && categories[i][0] != '\0') {
             int cat_id = get_category_id(categories[i]);
             if (cat_id >= 0) {
-                categorize_path_by_id(path_id, cat_id);
+                cat_ids[valid_cat_count++] = cat_id;
                 
-                /* Remove Uncategorized if assigning a different category */
+                /* Check if this is not "Uncategorized" */
                 char lower_name[MAX_TAG_LENGTH];
                 strncpy(lower_name, categories[i], sizeof(lower_name) - 1);
                 lower_name[sizeof(lower_name) - 1] = '\0';
                 str_to_lower(lower_name);
-                
                 if (strcmp(lower_name, "uncategorized") != 0) {
-                    remove_uncategorized(path_id);
+                    has_non_uncategorized = 1;
                 }
                 
                 printf_utf8("  Category: %s\n", categories[i]);
@@ -498,17 +495,69 @@ void add_path_with_metadata(const char *path, int max_depth,
         }
     }
     
-    /* Apply tags */
-    for (int i = 0; i < tag_count; i++) {
+    /* Pre-resolve tag IDs */
+    int tag_ids[32];
+    int valid_tag_count = 0;
+    
+    for (int i = 0; i < tag_count && i < 32; i++) {
         if (tags[i] && tags[i][0] != '\0') {
-            /* Use tag_path_by_id for silent operation, but we need the path string */
-            /* We'll use get_or_create_tag_with_check for similarity checking */
             int tag_id = get_or_create_tag_with_check(tags[i]);
             if (tag_id >= 0) {
-                tag_path_by_id(path_id, tag_id);
+                tag_ids[valid_tag_count++] = tag_id;
                 printf_utf8("  Tag: %s\n", tags[i]);
             }
         }
+    }
+    
+    /* If no valid categories or tags, we're done */
+    if (valid_cat_count == 0 && valid_tag_count == 0) {
+        return;
+    }
+    
+    /* Query all paths under the root (including the root itself) */
+    sqlite3_stmt *stmt;
+    char pattern[MAX_PATH_LENGTH];
+    snprintf(pattern, sizeof(pattern), "%s%s", normalized, PATH_SEPARATOR_STR);
+    
+    const char *sql = 
+        "SELECT id FROM paths WHERE path = ? OR path LIKE ? || '%';";
+    
+    if (sqlite3_prepare_v2(db, sql, -1, &stmt, NULL) != SQLITE_OK) {
+        fprintf(stderr, "Query error: %s\n", sqlite3_errmsg(db));
+        return;
+    }
+    
+    sqlite3_bind_text(stmt, 1, normalized, -1, SQLITE_STATIC);
+    sqlite3_bind_text(stmt, 2, pattern, -1, SQLITE_STATIC);
+    
+    int items_updated = 0;
+    
+    /* Apply categories and tags to each path */
+    while (sqlite3_step(stmt) == SQLITE_ROW) {
+        int path_id = sqlite3_column_int(stmt, 0);
+        
+        /* Apply categories */
+        for (int i = 0; i < valid_cat_count; i++) {
+            categorize_path_by_id(path_id, cat_ids[i]);
+        }
+        
+        /* Remove Uncategorized if we assigned a real category */
+        if (has_non_uncategorized) {
+            remove_uncategorized(path_id);
+        }
+        
+        /* Apply tags */
+        for (int i = 0; i < valid_tag_count; i++) {
+            tag_path_by_id(path_id, tag_ids[i]);
+        }
+        
+        items_updated++;
+    }
+    
+    sqlite3_finalize(stmt);
+    
+    if (items_updated > 1) {
+        printf_utf8("Applied to %d items.\n", items_updated);
     }
 }
 
