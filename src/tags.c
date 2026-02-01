@@ -262,9 +262,22 @@ int find_similar_tags(const char *new_tag, char *similar_name, size_t name_size,
 }
 
 int get_or_create_tag_with_check(const char *tag_name) {
-    /* Check if exact tag exists */
+    /* Check if exact tag exists (case-insensitive) */
     int tag_id = get_tag_id(tag_name);
     if (tag_id >= 0) {
+        /* Check if casing differs from what user typed */
+        sqlite3_stmt *stmt;
+        const char *sql = "SELECT name FROM tags WHERE id = ?;";
+        if (sqlite3_prepare_v2(db, sql, -1, &stmt, NULL) == SQLITE_OK) {
+            sqlite3_bind_int(stmt, 1, tag_id);
+            if (sqlite3_step(stmt) == SQLITE_ROW) {
+                const char *stored = (const char *)sqlite3_column_text(stmt, 0);
+                if (stored && strcmp(stored, tag_name) != 0) {
+                    printf_utf8("Note: Using existing tag '%s' (matched '%s')\n", stored, tag_name);
+                }
+            }
+            sqlite3_finalize(stmt);
+        }
         return tag_id;
     }
     
