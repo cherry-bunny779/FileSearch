@@ -693,6 +693,13 @@ void store_result(const char *path) {
         return;  /* Storage full */
     }
     
+    /* Check for duplicates */
+    for (int i = 0; i < g_last_results.count; i++) {
+        if (strcmp(g_last_results.paths[i], path) == 0) {
+            return;  /* Already stored */
+        }
+    }
+    
     strncpy(g_last_results.paths[g_last_results.count], path, MAX_PATH_LENGTH - 1);
     g_last_results.paths[g_last_results.count][MAX_PATH_LENGTH - 1] = '\0';
     g_last_results.count++;

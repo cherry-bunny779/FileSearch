@@ -64,7 +64,7 @@ int delete_tag(const char *name) {
     /* Check usage count */
     int usage = get_tag_usage_count(name);
     if (usage > 0) {
-        printf("Tag '%s' is assigned to %d path(s).\n", name, usage);
+        printf_utf8("Tag '%s' is assigned to %d path(s).\n", name, usage);
         if (!get_confirmation("Delete tag and remove all associations?")) {
             printf("Cancelled.\n");
             return -1;
@@ -93,7 +93,7 @@ int delete_tag(const char *name) {
     sqlite3_finalize(stmt);
     
     if (rc == SQLITE_DONE) {
-        printf("Deleted tag: %s\n", name);
+        printf_utf8("Deleted tag: %s\n", name);
         return 0;
     }
     return -1;
@@ -127,7 +127,7 @@ int rename_tag(const char *old_name, const char *new_name) {
     sqlite3_finalize(stmt);
     
     if (rc == SQLITE_DONE) {
-        printf("Renamed tag: '%s' -> '%s'\n", old_name, new_name);
+        printf_utf8("Renamed tag: '%s' -> '%s'\n", old_name, new_name);
         return 0;
     }
     return -1;
@@ -148,7 +148,7 @@ int prune_unused_tags(void) {
     printf("\n[Unused Tags]\n");
     int count = 0;
     while (sqlite3_step(stmt) == SQLITE_ROW) {
-        printf("  %s\n", sqlite3_column_text(stmt, 0));
+        printf_utf8("  %s\n", sqlite3_column_text(stmt, 0));
         count++;
     }
     sqlite3_finalize(stmt);
@@ -276,9 +276,9 @@ int get_or_create_tag_with_check(const char *tag_name) {
     if (find_similar_tags(tag_name, similar_name, sizeof(similar_name), 
                           &similar_distance, &is_substr) > 0) {
         if (is_substr) {
-            printf("Warning: Similar tag exists: '%s' (substring match)\n", similar_name);
+            printf_utf8("Warning: Similar tag exists: '%s' (substring match)\n", similar_name);
         } else {
-            printf("Warning: Similar tag exists: '%s' (distance: %d)\n", 
+            printf_utf8("Warning: Similar tag exists: '%s' (distance: %d)\n", 
                    similar_name, similar_distance);
         }
         
@@ -300,7 +300,7 @@ int get_or_create_tag_with_check(const char *tag_name) {
     /* Create new tag */
     tag_id = create_tag(tag_name);
     if (tag_id >= 0) {
-        printf("Created tag: %s\n", tag_name);
+        printf_utf8("Created tag: %s\n", tag_name);
     }
     return tag_id;
 }
@@ -483,7 +483,7 @@ void list_all_tags(void) {
     while (sqlite3_step(stmt) == SQLITE_ROW) {
         const char *name = (const char *)sqlite3_column_text(stmt, 0);
         int usage = sqlite3_column_int(stmt, 1);
-        printf("  %-30s (%d)\n", name, usage);
+        printf_utf8("  %-30s (%d)\n", name, usage);
         count++;
     }
     
@@ -515,10 +515,10 @@ void list_path_tags(const char *path) {
     
     sqlite3_bind_int(stmt, 1, path_id);
     
-    printf("\n[Tags for %s]\n", path);
+    printf_utf8("\n[Tags for %s]\n", path);
     int count = 0;
     while (sqlite3_step(stmt) == SQLITE_ROW) {
-        printf("  %s\n", sqlite3_column_text(stmt, 0));
+        printf_utf8("  %s\n", sqlite3_column_text(stmt, 0));
         count++;
     }
     
@@ -549,7 +549,7 @@ void search_tags_all(const char *query) {
         printf("\n[Exact Match - Tags]\n");
         int found = 0;
         while (sqlite3_step(stmt) == SQLITE_ROW) {
-            printf("  %s\n", sqlite3_column_text(stmt, 0));
+            printf_utf8("  %s\n", sqlite3_column_text(stmt, 0));
             found++;
         }
         if (!found) {
@@ -568,7 +568,7 @@ void search_tags_all(const char *query) {
         printf("\n[Substring Match - Tags]\n");
         int found = 0;
         while (sqlite3_step(stmt) == SQLITE_ROW) {
-            printf("  %s\n", sqlite3_column_text(stmt, 0));
+            printf_utf8("  %s\n", sqlite3_column_text(stmt, 0));
             found++;
         }
         if (!found) {
@@ -592,7 +592,7 @@ void search_tags_all(const char *query) {
         while (sqlite3_step(stmt) == SQLITE_ROW) {
             const char *name = (const char *)sqlite3_column_text(stmt, 0);
             int dist = sqlite3_column_int(stmt, 1);
-            printf("  %s (distance: %d)\n", name, dist);
+            printf_utf8("  %s (distance: %d)\n", name, dist);
             found++;
         }
         if (!found) {
