@@ -2,15 +2,20 @@
 
 ## CLI Command Reference
 
-### v4.1 Commands (Current)
+### v4.4 Commands (Current)
 ```
+Note: Use quotes for paths with spaces, e.g., "C:\Program Files\App"
+      Arrow keys work on macOS/Linux for command history (readline support)
+
 Path Commands:
-  add <path> [-d N] [-c cat...] [-t tag...]
+  add <path> [-d N] [-c cat...] [-t tag...] [-a]
                                      - Add file or directory to database
                                        -d N: recursion depth (0=no contents)
-                                       -c: assign categories (must exist)
-                                       -t: assign tags (created if needed)
+                                       -c: assign categories to ALL items
+                                       -t: assign tags to ALL items
+                                       -a: auto-tag from [tag] patterns in names
   remove <path>                      - Remove path from database
+  remove-all <directory>             - Remove all contents under directory
   info <path>                        - Show path details
 
 Search Commands:
@@ -27,6 +32,14 @@ Search Commands:
        --name, -n <term>               Filter by path name (substring)
        --fuzzy-distance, -fd <n>       Set fuzzy distance (default: 3)
 
+
+Batch Commands (operate on last search results):
+  results                            - Show stored search results
+  clear-results                      - Clear stored results
+  tag-results <tag>                  - Add tag to all stored results
+  untag-results <tag>                - Remove tag from all stored results
+  categorize-results <cat>           - Add category to all stored results
+  uncategorize-results <cat>         - Remove category from all stored results
 Tag Commands:
   tag <path> <tagname>               - Add tag to path
   untag <path> <tagname>             - Remove tag from path
@@ -57,15 +70,34 @@ Utility Commands:
 
 ---
 
+## Project Structure
+
+```
+Filesearch/
+├── src/
+│   ├── Makefile          - Cross-platform build configuration
+│   ├── main.c            - Entry point, CLI loop
+│   ├── utils.h/c         - String utilities, path handling, Levenshtein, UTF-8
+│   ├── database.h/c      - SQLite init, settings, schema, migrations
+│   ├── paths.h/c         - Path CRUD, directory scanning with depth control
+│   ├── tags.h/c          - Tag CRUD, delete, rename, prune, similarity
+│   ├── categories.h/c    - Category CRUD, path-category associations
+│   └── search.h/c        - Path search, structured search with fuzzy tags
+└── deps/
+    ├── sqlite3.c         - SQLite amalgamation (user provided)
+    └── sqlite3.h         - SQLite header (user provided)
+```
+
 ## Compilation
 
 ```bash
 # Build from src/ directory
-make -C src
+cd Filesearch/src
+make
 
 # Clean build
-make -C src clean      # Remove application objects
-make -C src cleanall   # Remove all objects including SQLite
+make clean      # Remove application objects
+make cleanall   # Remove all objects including SQLite
 ```
 
 ## Usage
@@ -80,11 +112,221 @@ make -C src cleanall   # Remove all objects including SQLite
 
 ---
 
+## Version 4.4: Auto-tagging & Batch Operations
+
+### New Features
+
+#### Auto-tag from Filename Patterns
+- **`-a` or `--auto-tag` flag extracts tags from `[tag]` patterns in filenames**
+  - Pattern: `[tag1][tag2] actual name`
+  - Example filename: `[RPG][Bethesda] Skyrim Special Edition`
+  - Extracted tags: `RPG`, `Bethesda`
+  
+  ```
+  > add /Games/Emulation -d 1 -a
+  Scanning directory (depth 1): /Games/Emulation
+  Added 15 files and 3 directories.
+  Auto-tagged: 24 tag(s) extracted from filenames.
+  ```
+
+#### Batch Operations on Search Results
+- **Search results are now stored for batch operations**
+- New commands operate on stored results:
+
+  | Command | Description |
+  |---------|-------------|
+  | `results` | Show stored search results |
+  | `clear-results` | Clear stored results |
+  | `tag-results <tag>` | Add tag to all stored results |
+  | `untag-results <tag>` | Remove tag from all stored results |
+  | `categorize-results <cat>` | Add category to all stored results |
+  | `uncategorize-results <cat>` | Remove category from all stored results |
+
+  **Example workflow:**
+  ```
+  > search Skyrim
+  [Exact Match - Paths]
+    [DIR]  /Games/Skyrim
+  [Prefix Match - Paths]
+    [DIR]  /Games/Skyrim
+    [DIR]  /Games/Skyrim/Data
+  ...
+  [5 results stored - use 'results' to view, 'tag-results <tag>' to batch tag]
+
+  > tag-results rpg
+  Tagged 5 items with 'rpg'
+
+  > categorize-results Games
+  Categorized 5 items as 'Games'
+  ```
+
+### Updated Functions
+
+| Module | New/Updated Functions |
+|--------|----------------------|
+| `utils.h/c` | `extract_tags_from_name()` - Extract tags from `[tag]` patterns |
+| `utils.h/c` | `store_result()`, `show_stored_results()`, `clear_stored_results()` |
+| `paths.h/c` | `auto_tag_path()` - Apply auto-tagging to a path |
+| `paths.h/c` | `add_path_with_metadata()` - Updated with `auto_tag` parameter |
+| `tags.h/c` | `untag_path_by_id()` - Silent untag by ID |
+| `categories.h/c` | `uncategorize_path_by_id()` - Silent uncategorize by ID |
+| `search.c` | `set_store_results()` - Control result storage |
+
+---
+
+## Version 4.3: Recursive Metadata & Readline Support
+
+### New Features
+
+#### Categories/Tags Apply to All Items in Recursive Add
+- **`-c` and `-t` flags now apply to ALL items**
+  - Previously only applied to the root item at depth 0
+  - Now applies to every file and directory added recursively
+  - Example: `add G:\Games\Skyrim -d 2 -c Games -t rpg bethesda`
+    - The category "Games" and tags "rpg", "bethesda" are applied to Skyrim folder AND all its contents
+
+#### Readline Support (macOS/Linux)
+- **Arrow keys now work for command history**
+  - Up/Down arrows navigate through previous commands
+  - Left/Right arrows for line editing
+  - macOS: Uses system libedit (pre-installed), or Homebrew GNU readline if available
+  - Linux: Uses GNU readline
+  - Can be disabled: `make READLINE=no`
+  - Windows uses native console which already has this functionality
+
+### Build Changes
+
+| Platform | Library | Notes |
+|----------|---------|-------|
+| macOS (default) | libedit | System-provided, uses `<editline/readline.h>` |
+| macOS (Homebrew) | GNU readline | Auto-detected at `/usr/local/opt/readline` or `/opt/homebrew/opt/readline` |
+| Linux | GNU readline | Uses `<readline/readline.h>` |
+| Windows (native) | N/A | Uses native console (readline disabled) |
+| Windows (MSYS2) | GNU readline | Optional |
+
+**Build commands:**
+```bash
+# Standard build (readline auto-detected)
+make cleanall && make
+
+# The build will show what readline library is being used:
+# Built filesearch for macOS
+#   Readline: yes
+#   Using: editline (system libedit)
+
+# If you see escape codes (^[[D), rebuild:
+make clean && make
+
+# Disable readline if it causes issues:
+make READLINE=no
+```
+
+**Verify readline is working:**
+- At startup, you should see: "(editline enabled)" or "(readline enabled)"
+- If you see "(Tip: Rebuild with 'make' to enable arrow key support)", readline was not compiled in
+
+**Install Homebrew readline (optional, for better compatibility):**
+```bash
+brew install readline
+make cleanall && make
+```
+
+---
+
+## Version 4.2: Quoted Path Support & Batch Remove
+
+### New Features
+
+#### Quoted Path Support
+- **Paths with spaces now supported**
+  - Use double or single quotes: `add "C:\Program Files\Game" -d 0`
+  - Works with all path commands: `add`, `remove`, `remove-all`, `info`, `tag`, `untag`, `categorize`, `uncategorize`, `tags`, `categories`
+  - Example: `tag "C:\My Documents\Report.pdf" important`
+
+#### Batch Remove Command
+- **`remove-all <directory>`** - Remove all contents under a directory
+  - Only removes contents, NOT the directory itself
+  - Shows count of items to be removed
+  - Requires confirmation before deletion
+  - Example: `remove-all G:\Games` removes all indexed files/folders under G:\Games
+
+### Updated Functions
+
+| Module | New/Updated Functions |
+|--------|----------------------|
+| `utils.h/c` | `extract_quoted_path()` - Extract path from quoted or unquoted string |
+| `paths.h/c` | `remove_contents_under_path()` - Batch remove with confirmation |
+
+---
+
+## Version 4.1: Enhanced Add Command, Uncategorized Automation & Unicode Fixes
+
+### New Features
+
+#### Single File Addition
+- **Add individual files directly**
+  - `add /path/to/file.txt` - Add a single file to database
+  - Automatically extracts filename as "Name"
+  - Stores parent directory path
+  - `-d` flag is ignored for files
+
+#### Auto-Assign "Uncategorized" Category
+- **Automatic categorization on add**
+  - All newly added paths are assigned to "Uncategorized"
+  - "Uncategorized" category is created if it doesn't exist
+  - Provides immediate visibility in category-based searches
+
+#### Smart Category Management  
+- **Remove from "Uncategorized" on categorize**
+  - When assigning any category other than "Uncategorized", the path is automatically removed from "Uncategorized"
+  - Keeps category assignments clean
+
+#### Expanded Add Command
+- **Assign categories and tags on add**
+  ```
+  add /path [-d N] [-c Cat1 Cat2 ...] [-t tag1 tag2 ...]
+  ```
+  - `-c` assigns multiple categories (categories must exist)
+  - `-t` assigns multiple tags (tags created if needed)
+  - Example: `add /Games/Skyrim -d 0 -c Games RPG -t bethesda openworld`
+
+#### Search by Name vs Full Path
+- **`search <term>`** - Searches the filename only (Name column)
+- **`search-path <term>`** - Searches the full path (Path column)
+- All search methods (exact, prefix, substring, fuzzy) work on both
+
+### Bug Fixes
+
+#### Windows Unicode Console Output
+- **New `printf_utf8()` function**
+  - Uses `WriteConsoleW()` on Windows for proper Unicode display
+  - Fixes garbled output for CJK characters (Chinese, Japanese, Korean)
+  - Paths with international characters now display correctly
+  - Example: `G:\Games\文字冒险游戏备档` displays properly
+
+#### Depth Flag Fix
+- **Fixed `-d 0` behavior**
+  - Changed `current_depth > max_depth` to `current_depth >= max_depth`
+  - `-d 0` now correctly adds directory only with no contents
+  - `-d 1` adds immediate children only
+
+### Updated Module Functions
+
+| Module | New Functions |
+|--------|---------------|
+| `utils.h/c` | `get_file_size()`, `is_regular_file()`, `print_utf8()`, `println_utf8()`, `printf_utf8()` |
+| `paths.h/c` | `add_file()`, `add_path()`, `add_path_with_metadata()` |
+| `categories.h/c` | `categorize_path_by_id()`, `assign_uncategorized()`, `remove_uncategorized()`, `is_categorized()` |
+| `tags.h/c` | `tag_path_by_id()` |
+| `search.h/c` | `search_fullpath_*()` functions for path-based search |
+
+---
+
 ## Version 4: Code Library Reorganization & Issue Fixes
 
 ### Code Reorganization
 - **Modular architecture**
-  - Split monolithic `filesearch_v3.c` into separate source files
+  - Split monolithic `filesearch_v2.c` into separate source files
   - Header/implementation pairs for each module
   - Clear separation of concerns
 
@@ -256,45 +498,79 @@ tags (id, name)
 
 ## Feature Comparison Matrix
 
-| Feature | v1 | v2 | v3 | v4 |
-|---------|----|----|----|----|
-| Persistent storage | ✗ | ✓ | ✓ | ✓ |
-| Path management | ✗ | ✓ | ✓ | ✓ |
-| Depth-controlled scanning | ✗ | ✗ | ✗ | ✓ |
-| Tag storage | ✓ | ✓ | ✓ | ✓ |
-| Tag deletion/rename | ✗ | ✗ | ✗ | ✓ |
-| Prune unused tags | ✗ | ✗ | ✗ | ✓ |
-| Path-tag association | ✗ | Schema | ✓ | ✓ |
-| Categories | ✗ | ✗ | ✓ | ✓ |
-| Category deletion/rename | ✗ | ✗ | ✗ | ✓ |
-| Tag similarity warning | ✗ | ✗ | ✓ | ✓ |
-| Database settings | ✗ | ✗ | ✓ | ✓ |
-| Schema versioning | ✗ | ✗ | ✓ | ✓ |
-| Structured search | ✗ | ✗ | ✓ | ✓ |
-| Fuzzy tag in find | ✗ | ✗ | ✗ | ✓ |
-| Cross-platform | ✗ | ✓ | ✓ | ✓ |
-| Modular codebase | ✗ | ✗ | ✗ | ✓ |
-| Cross-platform Makefile | ✗ | ✗ | ✗ | ✓ |
+| Feature | v1 | v2 | v3 | v4 | v4.1 | v4.2 | v4.3 | v4.4 |
+|---------|----|----|----|----|------|------|------|------|
+| Persistent storage | ✗ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ |
+| Path management | ✗ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ |
+| Single file addition | ✗ | ✗ | ✗ | ✗ | ✓ | ✓ | ✓ | ✓ |
+| Quoted paths (spaces) | ✗ | ✗ | ✗ | ✗ | ✗ | ✓ | ✓ | ✓ |
+| Batch remove (remove-all) | ✗ | ✗ | ✗ | ✗ | ✗ | ✓ | ✓ | ✓ |
+| Depth-controlled scanning | ✗ | ✗ | ✗ | ✓ | ✓ | ✓ | ✓ | ✓ |
+| Add with categories/tags | ✗ | ✗ | ✗ | ✗ | ✓ | ✓ | ✓ | ✓ |
+| Recursive metadata apply | ✗ | ✗ | ✗ | ✗ | ✗ | ✗ | ✓ | ✓ |
+| Auto-tag from [tag] pattern | ✗ | ✗ | ✗ | ✗ | ✗ | ✗ | ✗ | ✓ |
+| Batch operations (results) | ✗ | ✗ | ✗ | ✗ | ✗ | ✗ | ✗ | ✓ |
+| Auto "Uncategorized" | ✗ | ✗ | ✗ | ✗ | ✓ | ✓ | ✓ | ✓ |
+| Tag storage | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ |
+| Tag deletion/rename | ✗ | ✗ | ✗ | ✓ | ✓ | ✓ | ✓ | ✓ |
+| Prune unused tags | ✗ | ✗ | ✗ | ✓ | ✓ | ✓ | ✓ | ✓ |
+| Path-tag association | ✗ | Schema | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ |
+| Categories | ✗ | ✗ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ |
+| Category deletion/rename | ✗ | ✗ | ✗ | ✓ | ✓ | ✓ | ✓ | ✓ |
+| Tag similarity warning | ✗ | ✗ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ |
+| Database settings | ✗ | ✗ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ |
+| Schema versioning | ✗ | ✗ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ |
+| Structured search | ✗ | ✗ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ |
+| Fuzzy tag in find | ✗ | ✗ | ✗ | ✓ | ✓ | ✓ | ✓ | ✓ |
+| Search by name vs path | ✗ | ✗ | ✗ | ✗ | ✓ | ✓ | ✓ | ✓ |
+| Cross-platform | ✗ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ |
+| Unicode console output | ✗ | ✗ | ✗ | ✗ | ✓ | ✓ | ✓ | ✓ |
+| Readline (arrow keys) | ✗ | ✗ | ✗ | ✗ | ✗ | ✗ | ✓ | ✓ |
+| Modular codebase | ✗ | ✗ | ✗ | ✓ | ✓ | ✓ | ✓ | ✓ |
+| Cross-platform Makefile | ✗ | ✗ | ✗ | ✓ | ✓ | ✓ | ✓ | ✓ |
 
 ---
 
 ## Known Issues
 
+### Resolved in v4.4
+- ~~No way to batch tag search results~~ → Fixed with batch commands (tag-results, etc.)
+- ~~Manual tagging for files with [tag] pattern names~~ → Fixed with auto-tag (-a flag)
+
+### Resolved in v4.3
+- ~~Categories/tags only apply to root item~~ → Fixed: Now applies to all items recursively
+- ~~Arrow keys print escape codes on macOS~~ → Fixed with editline/readline support
+
+### macOS Arrow Keys Troubleshooting
+If you still see `^[[D` when pressing arrow keys:
+1. **Check startup message** - Should show "(editline enabled)" or "(readline enabled)"
+2. **Rebuild the application:**
+   ```bash
+   cd Filesearch/src
+   make cleanall && make
+   ```
+3. **Verify build output** shows "Readline: yes"
+4. **If using Homebrew readline**, ensure it's properly linked:
+   ```bash
+   brew install readline
+   make cleanall && make
+   ```
+5. **As a workaround**, install rlwrap: `brew install rlwrap && rlwrap ./filesearch`
+
+### Resolved in v4.2
+- ~~Paths with spaces cannot be added~~ → Fixed with quoted path support
+- ~~No batch remove for directory contents~~ → Fixed with `remove-all` command
+
+### Resolved in v4.1
+- ~~Cannot add single files~~ → Fixed with `add_file()` function
+- ~~No auto-categorization~~ → Fixed with "Uncategorized" auto-assignment
+- ~~Unicode paths display garbled~~ → Fixed with `printf_utf8()` using `WriteConsoleW()`
+- ~~-d 0 still scans one level~~ → Fixed depth comparison (`>=` instead of `>`)
+
 ### Resolved in v4
 - ~~Non-recursive add option~~ → Fixed with `-d` depth flag
 - ~~Tags cannot be deleted~~ → Fixed with `delete-tag`, `rename-tag`, `prune-tags`
 - ~~Find command lacks fuzzy tag search~~ → Fixed with `--tag-fuzzy` flag
-- ~~Paths containing non-UTF8 characters cannot be added under some Windows configurations~~
-- ~~Non-UTF8 characters appear garbeled when returned from display functions~~
-- ~~Fixed depth recusion issue in the add command, where "-d 0" still results in 1 level of recusion~~
 
-### Resolved in v4.1
-- ~~Implement search by name in addition to search by path, and make search by name scheme the default invoked by the command "search"~~
-- ~~Upon adding an item, it must be added to "Uncategorized" immediately if category unassigned~~
-- ~~Upon assigning to a category other than "Uncategorized", it should be removed from "Uncategorized" (upon assigning a a category, make an additional check if the item is already assigned to "Uncategorized". If so, remove "Uncategorized" and proceed with assigning the category)~~
-- ~~Expand the SLI command "add" with additional parameters to assign category(ies) and tags upon initial addition~~
-- ~~Currently cannot add a file by its path. Can only add the file to the database by adding its parent directory with depth of 1~~
-
-### Remaining/Intruduced as of v4.1
-- Paths and file names containing non-Chs/Jp spaces cannot be added
-- Add a batch remove funciton that removes all files/paths under the specified directory. 
+### Remaining
+1. None currently known

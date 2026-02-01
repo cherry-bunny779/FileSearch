@@ -10,9 +10,21 @@
  * Result Display Helper
  * ============================================ */
 
+/* Flag to control whether results are stored */
+static int g_store_results = 0;
+
+void set_store_results(int enabled) {
+    g_store_results = enabled;
+}
+
 static void print_path_result(sqlite3_stmt *stmt, int show_distance) {
     const char *path = (const char *)sqlite3_column_text(stmt, 0);
     int is_dir = sqlite3_column_int(stmt, 1);
+    
+    /* Store result if enabled */
+    if (g_store_results && path) {
+        store_result(path);
+    }
     
     if (is_dir) {
         printf_utf8("  [DIR]  %s", path);
@@ -159,10 +171,21 @@ void search_paths_fuzzy(const char *query, int max_distance) {
 }
 
 void search_paths_all(const char *query) {
+    /* Clear previous results and enable storing */
+    g_last_results.count = 0;
+    set_store_results(1);
+    
     search_paths_exact(query);
     search_paths_prefix(query);
     search_paths_substring(query);
     search_paths_fuzzy(query, -1);
+    
+    set_store_results(0);
+    
+    if (g_last_results.count > 0) {
+        printf("[%d results stored - use 'results' to view, 'tag-results <tag>' to batch tag]\n\n", 
+               g_last_results.count);
+    }
 }
 
 /* ============================================
@@ -295,10 +318,21 @@ void search_fullpath_fuzzy(const char *query, int max_distance) {
 }
 
 void search_fullpath_all(const char *query) {
+    /* Clear previous results and enable storing */
+    g_last_results.count = 0;
+    set_store_results(1);
+    
     search_fullpath_exact(query);
     search_fullpath_prefix(query);
     search_fullpath_substring(query);
     search_fullpath_fuzzy(query, -1);
+    
+    set_store_results(0);
+    
+    if (g_last_results.count > 0) {
+        printf("[%d results stored - use 'results' to view, 'tag-results <tag>' to batch tag]\n\n", 
+               g_last_results.count);
+    }
 }
 
 /* ============================================

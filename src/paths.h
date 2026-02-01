@@ -34,7 +34,11 @@ void add_path(const char *path, int max_depth);
 /* Unified add with categories and tags */
 void add_path_with_metadata(const char *path, int max_depth,
                             const char **categories, int category_count,
-                            const char **tags, int tag_count);
+                            const char **tags, int tag_count,
+                            int auto_tag);
+
+/* Auto-tag: extract tags from filename pattern [tag1][tag2] name */
+int auto_tag_path(int path_id, const char *name);
 
 /* Path information display */
 void show_path_info(const char *path);

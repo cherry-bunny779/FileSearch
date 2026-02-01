@@ -90,4 +90,26 @@ int levenshtein(const char *s1, const char *s2);
 void sqlite_levenshtein(sqlite3_context *ctx, int argc, sqlite3_value **argv);
 int is_substring_match(const char *s1, const char *s2);
 
+/* Tag extraction from filename patterns like [tag1][tag2] name */
+#define MAX_EXTRACTED_TAGS 32
+typedef struct {
+    char tags[MAX_EXTRACTED_TAGS][MAX_TAG_LENGTH];
+    int count;
+} ExtractedTags;
+
+int extract_tags_from_name(const char *name, ExtractedTags *result);
+
+/* Search results storage for batch operations */
+#define MAX_STORED_RESULTS 1000
+typedef struct {
+    char paths[MAX_STORED_RESULTS][MAX_PATH_LENGTH];
+    int count;
+} StoredResults;
+
+extern StoredResults g_last_results;
+
+void clear_stored_results(void);
+void store_result(const char *path);
+void show_stored_results(void);
+
 #endif /* FILESEARCH_UTILS_H */

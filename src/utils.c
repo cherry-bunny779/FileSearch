@@ -613,3 +613,100 @@ int is_substring_match(const char *s1, const char *s2) {
     
     return (strstr(lower1, lower2) != NULL || strstr(lower2, lower1) != NULL);
 }
+
+/* ============================================
+ * Tag Extraction from Filename Patterns
+ * ============================================ */
+
+/*
+ * Extract tags from a filename with pattern [tag1][tag2]... name
+ * Examples:
+ *   "[RPG][Bethesda] Skyrim" -> tags: RPG, Bethesda
+ *   "[2024][Important] Report.pdf" -> tags: 2024, Important
+ *   "Regular filename.txt" -> no tags
+ *
+ * Returns: number of tags extracted
+ */
+int extract_tags_from_name(const char *name, ExtractedTags *result) {
+    result->count = 0;
+    
+    if (!name || !result) {
+        return 0;
+    }
+    
+    const char *p = name;
+    
+    while (*p && result->count < MAX_EXTRACTED_TAGS) {
+        /* Skip whitespace */
+        while (*p && isspace((unsigned char)*p)) p++;
+        
+        /* Look for opening bracket */
+        if (*p != '[') {
+            break;  /* No more tags */
+        }
+        
+        p++;  /* Skip '[' */
+        
+        /* Find closing bracket */
+        const char *tag_start = p;
+        const char *tag_end = strchr(p, ']');
+        
+        if (!tag_end) {
+            break;  /* Malformed - no closing bracket */
+        }
+        
+        /* Extract tag content */
+        size_t tag_len = tag_end - tag_start;
+        if (tag_len > 0 && tag_len < MAX_TAG_LENGTH) {
+            strncpy(result->tags[result->count], tag_start, tag_len);
+            result->tags[result->count][tag_len] = '\0';
+            
+            /* Trim whitespace from tag */
+            trim_whitespace(result->tags[result->count]);
+            
+            /* Only add non-empty tags */
+            if (result->tags[result->count][0] != '\0') {
+                result->count++;
+            }
+        }
+        
+        p = tag_end + 1;  /* Move past ']' */
+    }
+    
+    return result->count;
+}
+
+/* ============================================
+ * Search Results Storage for Batch Operations
+ * ============================================ */
+
+/* Global storage for last search results */
+StoredResults g_last_results = { .count = 0 };
+
+void clear_stored_results(void) {
+    g_last_results.count = 0;
+    printf("Cleared stored results.\n");
+}
+
+void store_result(const char *path) {
+    if (g_last_results.count >= MAX_STORED_RESULTS) {
+        return;  /* Storage full */
+    }
+    
+    strncpy(g_last_results.paths[g_last_results.count], path, MAX_PATH_LENGTH - 1);
+    g_last_results.paths[g_last_results.count][MAX_PATH_LENGTH - 1] = '\0';
+    g_last_results.count++;
+}
+
+void show_stored_results(void) {
+    if (g_last_results.count == 0) {
+        printf("No stored results. Run a search first.\n");
+        return;
+    }
+    
+    printf("\n[Stored Results: %d items]\n", g_last_results.count);
+    for (int i = 0; i < g_last_results.count; i++) {
+        printf_utf8("  %d. %s\n", i + 1, g_last_results.paths[i]);
+    }
+    printf("\n");
+}

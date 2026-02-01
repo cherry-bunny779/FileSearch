@@ -23,6 +23,9 @@ void search_fullpath_substring(const char *query);
 void search_fullpath_fuzzy(const char *query, int max_distance);
 void search_fullpath_all(const char *query);
 
+/* Control result storage for batch operations */
+void set_store_results(int enabled);
+
 /* Structured search filters */
 typedef struct {
     char category[MAX_TAG_LENGTH];     /* Category filter (exact) */

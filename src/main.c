@@ -50,18 +50,19 @@ void print_help(void) {
     printf("Note: Use quotes for paths with spaces, e.g., \"C:\\Program Files\\App\"\n");
     printf("\n");
     printf("Path Commands:\n");
-    printf("  add <path> [-d N] [-c cat...] [-t tag...]\n");
+    printf("  add <path> [-d N] [-c cat...] [-t tag...] [-a]\n");
     printf("                                - Add file or directory to database\n");
     printf("                                  -d N limits recursion depth (0=no recurse)\n");
     printf("                                  -c assigns categories (must exist)\n");
     printf("                                  -t assigns tags (created if needed)\n");
+    printf("                                  -a auto-tag from [tag] patterns in names\n");
     printf("  remove <path>                 - Remove path from database\n");
     printf("  remove-all <directory>        - Remove all contents under directory\n");
     printf("  info <path>                   - Show path details with tags and categories\n");
     printf("\n");
     printf("Search Commands:\n");
-    printf("  search <term>                 - Search by filename (all methods)\n");
-    printf("  search-path <term>            - Search by full path (all methods)\n");
+    printf("  search <term>                 - Search by filename (stores results)\n");
+    printf("  search-path <term>            - Search by full path (stores results)\n");
     printf("  exact <term>                  - Exact match on names\n");
     printf("  prefix <term>                 - Prefix match on names\n");
     printf("  substring <term>              - Substring match on names\n");
@@ -72,6 +73,14 @@ void print_help(void) {
     printf("       --tag-fuzzy, -tf <name>    Filter by tag (fuzzy match)\n");
     printf("       --name, -n <term>          Filter by path name (substring)\n");
     printf("       --fuzzy-distance, -fd <n>  Set fuzzy distance (default: 3)\n");
+    printf("\n");
+    printf("Batch Commands (operate on last search results):\n");
+    printf("  results                       - Show stored search results\n");
+    printf("  clear-results                 - Clear stored results\n");
+    printf("  tag-results <tag>             - Add tag to all stored results\n");
+    printf("  untag-results <tag>           - Remove tag from all stored results\n");
+    printf("  categorize-results <cat>      - Add category to all stored results\n");
+    printf("  uncategorize-results <cat>    - Remove category from all stored results\n");
     printf("\n");
     printf("Tag Commands:\n");
     printf("  tag <path> <tagname>          - Add tag to path\n");
@@ -134,11 +143,12 @@ typedef struct {
     int category_count;
     char tags[MAX_TAGS][MAX_TAG_LENGTH];
     int tag_count;
+    int auto_tag;  /* Extract tags from [tag] patterns in filenames */
 } AddArgs;
 
 /*
  * Parse 'add' command arguments.
- * Syntax: add <path> [-d depth] [-c cat1 cat2 ...] [-t tag1 tag2 ...]
+ * Syntax: add <path> [-d depth] [-c cat1 cat2 ...] [-t tag1 tag2 ...] [-a|--auto-tag]
  * Path can be quoted: add "C:\Program Files\Game" -d 0
  */
 void parse_add_args_full(const char *args, AddArgs *result) {
@@ -147,6 +157,7 @@ void parse_add_args_full(const char *args, AddArgs *result) {
     result->max_depth = get_int_setting("default_scan_depth", DEFAULT_SCAN_DEPTH);
     result->category_count = 0;
     result->tag_count = 0;
+    result->auto_tag = 0;
     
     if (!args || strlen(args) == 0) {
         return;
@@ -194,6 +205,9 @@ void parse_add_args_full(const char *args, AddArgs *result) {
             mode = 2;  /* Following tokens are categories until another flag */
         } else if (strcmp(tokens[i], "-t") == 0) {
             mode = 3;  /* Following tokens are tags until another flag */
+        } else if (strcmp(tokens[i], "-a") == 0 || strcmp(tokens[i], "--auto-tag") == 0) {
+            result->auto_tag = 1;
+            mode = 0;
         } else if (tokens[i][0] == '-' && (tokens[i][1] == 'd' || tokens[i][1] == 'c' || tokens[i][1] == 't')) {
             /* Handle combined flags like -d0 */
             if (tokens[i][1] == 'd' && tokens[i][2] != '\0') {
@@ -357,12 +371,13 @@ void run_interactive_cli(void) {
                 printf("  Optional:\n");
                 printf("    -c Cat1 Cat2 ...  Assign categories (must exist)\n");
                 printf("    -t tag1 tag2 ...  Assign tags (created if needed)\n");
+                printf("    -a, --auto-tag    Extract tags from [tag] patterns in filenames\n");
             } else {
                 AddArgs add_args;
                 parse_add_args_full(argument, &add_args);
                 
                 if (strlen(add_args.path) > 0) {
-                    if (add_args.category_count > 0 || add_args.tag_count > 0) {
+                    if (add_args.category_count > 0 || add_args.tag_count > 0 || add_args.auto_tag) {
                         /* Convert arrays to pointer arrays for the function call */
                         const char *cat_ptrs[MAX_CATEGORIES];
                         const char *tag_ptrs[MAX_TAGS];
@@ -376,12 +391,13 @@ void run_interactive_cli(void) {
                         
                         add_path_with_metadata(add_args.path, add_args.max_depth,
                                                cat_ptrs, add_args.category_count,
-                                               tag_ptrs, add_args.tag_count);
+                                               tag_ptrs, add_args.tag_count,
+                                               add_args.auto_tag);
                     } else {
                         add_path(add_args.path, add_args.max_depth);
                     }
                 } else {
-                    printf("Usage: add <path> [-d depth] [-c category...] [-t tag...]\n");
+                    printf("Usage: add <path> [-d depth] [-c category...] [-t tag...] [-a]\n");
                 }
             }
         }
@@ -562,6 +578,101 @@ void run_interactive_cli(void) {
         }
         else if (strcmp(command, "prune-tags") == 0) {
             prune_unused_tags();
+        }
+        /* ============================================
+         * Batch Commands (operate on stored results)
+         * ============================================ */
+        else if (strcmp(command, "results") == 0) {
+            show_stored_results();
+        }
+        else if (strcmp(command, "clear-results") == 0) {
+            clear_stored_results();
+        }
+        else if (strcmp(command, "tag-results") == 0) {
+            if (strlen(argument) == 0) {
+                printf("Usage: tag-results <tagname>\n");
+            } else if (g_last_results.count == 0) {
+                printf("No stored results. Run a search first.\n");
+            } else {
+                int tag_id = get_or_create_tag_with_check(argument);
+                if (tag_id >= 0) {
+                    int tagged = 0;
+                    for (int i = 0; i < g_last_results.count; i++) {
+                        int path_id = get_path_id(g_last_results.paths[i]);
+                        if (path_id >= 0) {
+                            tag_path_by_id(path_id, tag_id);
+                            tagged++;
+                        }
+                    }
+                    printf("Tagged %d items with '%s'\n", tagged, argument);
+                }
+            }
+        }
+        else if (strcmp(command, "untag-results") == 0) {
+            if (strlen(argument) == 0) {
+                printf("Usage: untag-results <tagname>\n");
+            } else if (g_last_results.count == 0) {
+                printf("No stored results. Run a search first.\n");
+            } else {
+                int tag_id = get_tag_id(argument);
+                if (tag_id < 0) {
+                    printf("Tag not found: %s\n", argument);
+                } else {
+                    int untagged = 0;
+                    for (int i = 0; i < g_last_results.count; i++) {
+                        int path_id = get_path_id(g_last_results.paths[i]);
+                        if (path_id >= 0) {
+                            untag_path_by_id(path_id, tag_id);
+                            untagged++;
+                        }
+                    }
+                    printf("Removed tag '%s' from %d items\n", argument, untagged);
+                }
+            }
+        }
+        else if (strcmp(command, "categorize-results") == 0) {
+            if (strlen(argument) == 0) {
+                printf("Usage: categorize-results <category>\n");
+            } else if (g_last_results.count == 0) {
+                printf("No stored results. Run a search first.\n");
+            } else {
+                int cat_id = get_category_id(argument);
+                if (cat_id < 0) {
+                    printf("Category not found: %s (use 'create-category' first)\n", argument);
+                } else {
+                    int categorized = 0;
+                    for (int i = 0; i < g_last_results.count; i++) {
+                        int path_id = get_path_id(g_last_results.paths[i]);
+                        if (path_id >= 0) {
+                            categorize_path_by_id(path_id, cat_id);
+                            categorized++;
+                        }
+                    }
+                    printf("Categorized %d items as '%s'\n", categorized, argument);
+                }
+            }
+        }
+        else if (strcmp(command, "uncategorize-results") == 0) {
+            if (strlen(argument) == 0) {
+                printf("Usage: uncategorize-results <category>\n");
+            } else if (g_last_results.count == 0) {
+                printf("No stored results. Run a search first.\n");
+            } else {
+                int cat_id = get_category_id(argument);
+                if (cat_id < 0) {
+                    printf("Category not found: %s\n", argument);
+                } else {
+                    int uncategorized = 0;
+                    for (int i = 0; i < g_last_results.count; i++) {
+                        int path_id = get_path_id(g_last_results.paths[i]);
+                        if (path_id >= 0) {
+                            uncategorize_path_by_id(path_id, cat_id);
+                            uncategorized++;
+                        }
+                    }
+                    printf("Removed category '%s' from %d items\n", argument, uncategorized);
+                }
+            }
         }
         else if (strcmp(command, "categorize") == 0) {
             if (strlen(argument) == 0) {

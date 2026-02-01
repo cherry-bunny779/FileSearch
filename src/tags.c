@@ -441,6 +441,27 @@ int tag_path_by_id(int path_id, int tag_id) {
     return (rc == SQLITE_DONE) ? 0 : -1;
 }
 
+/*
+ * Remove tag from path by IDs. Silent operation with no console output.
+ * Used internally for bulk operations.
+ */
+int untag_path_by_id(int path_id, int tag_id) {
+    sqlite3_stmt *stmt;
+    const char *sql = "DELETE FROM path_tags WHERE path_id = ? AND tag_id = ?;";
+    
+    if (sqlite3_prepare_v2(db, sql, -1, &stmt, NULL) != SQLITE_OK) {
+        return -1;
+    }
+    
+    sqlite3_bind_int(stmt, 1, path_id);
+    sqlite3_bind_int(stmt, 2, tag_id);
+    
+    int rc = sqlite3_step(stmt);
+    sqlite3_finalize(stmt);
+    
+    return (rc == SQLITE_DONE) ? 0 : -1;
+}
+
 /* ============================================
  * Tag Listing
  * ============================================ */

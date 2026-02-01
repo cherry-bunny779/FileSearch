@@ -452,9 +452,42 @@ void add_path(const char *path, int max_depth) {
  * Unified Add with Metadata
  * ============================================ */
 
+/* ============================================
+ * Auto-tag from Filename Patterns
+ * ============================================ */
+
+/*
+ * Extract tags from filename pattern [tag1][tag2]... and apply them.
+ * Returns: number of tags applied
+ */
+int auto_tag_path(int path_id, const char *name) {
+    ExtractedTags extracted;
+    int count = extract_tags_from_name(name, &extracted);
+    
+    if (count == 0) {
+        return 0;
+    }
+    
+    int applied = 0;
+    for (int i = 0; i < extracted.count; i++) {
+        int tag_id = get_or_create_tag_with_check(extracted.tags[i]);
+        if (tag_id >= 0) {
+            tag_path_by_id(path_id, tag_id);
+            applied++;
+        }
+    }
+    
+    return applied;
+}
+
+/* ============================================
+ * Unified Add with Metadata
+ * ============================================ */
+
 void add_path_with_metadata(const char *path, int max_depth,
                             const char **categories, int category_count,
-                            const char **tags, int tag_count) {
+                            const char **tags, int tag_count,
+                            int auto_tag) {
     char normalized[MAX_PATH_LENGTH];
     strncpy(normalized, path, sizeof(normalized) - 1);
     normalized[sizeof(normalized) - 1] = '\0';
@@ -509,8 +542,8 @@ void add_path_with_metadata(const char *path, int max_depth,
         }
     }
     
-    /* If no valid categories or tags, we're done */
-    if (valid_cat_count == 0 && valid_tag_count == 0) {
+    /* If no valid categories, tags, or auto-tag, we're done */
+    if (valid_cat_count == 0 && valid_tag_count == 0 && !auto_tag) {
         return;
     }
     
@@ -520,7 +553,7 @@ void add_path_with_metadata(const char *path, int max_depth,
     snprintf(pattern, sizeof(pattern), "%s%s", normalized, PATH_SEPARATOR_STR);
     
     const char *sql = 
-        "SELECT id FROM paths WHERE path = ? OR path LIKE ? || '%';";
+        "SELECT id, name FROM paths WHERE path = ? OR path LIKE ? || '%';";
     
     if (sqlite3_prepare_v2(db, sql, -1, &stmt, NULL) != SQLITE_OK) {
         fprintf(stderr, "Query error: %s\n", sqlite3_errmsg(db));
@@ -531,10 +564,12 @@ void add_path_with_metadata(const char *path, int max_depth,
     sqlite3_bind_text(stmt, 2, pattern, -1, SQLITE_STATIC);
     
     int items_updated = 0;
+    int auto_tags_applied = 0;
     
-    /* Apply categories and tags to each path */
+    /* Apply categories, tags, and auto-tag to each path */
     while (sqlite3_step(stmt) == SQLITE_ROW) {
         int path_id = sqlite3_column_int(stmt, 0);
+        const char *name = (const char *)sqlite3_column_text(stmt, 1);
         
         /* Apply categories */
         for (int i = 0; i < valid_cat_count; i++) {
@@ -551,6 +586,11 @@ void add_path_with_metadata(const char *path, int max_depth,
             tag_path_by_id(path_id, tag_ids[i]);
         }
         
+        /* Auto-tag from filename pattern */
+        if (auto_tag && name) {
+            auto_tags_applied += auto_tag_path(path_id, name);
+        }
+        
         items_updated++;
     }
     
@@ -558,6 +598,10 @@ void add_path_with_metadata(const char *path, int max_depth,
     
     if (items_updated > 1) {
         printf_utf8("Applied to %d items.\n", items_updated);
+    }
+    
+    if (auto_tag && auto_tags_applied > 0) {
+        printf_utf8("Auto-tagged: %d tag(s) extracted from filenames.\n", auto_tags_applied);
     }
 }
 
