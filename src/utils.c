@@ -717,3 +717,76 @@ void show_stored_results(void) {
     }
     printf("\n");
 }
+
+/* ============================================
+ * Check Results Storage for Sync Operations
+ * ============================================ */
+
+CheckResults g_check_new = { .count = 0 };
+CheckResults g_check_missing = { .count = 0 };
+
+void clear_check_results(void) {
+    g_check_new.count = 0;
+    g_check_missing.count = 0;
+}
+
+static void store_check_item(CheckResults *results, const char *path, int is_directory, long long size) {
+    if (results->count >= MAX_CHECK_RESULTS) {
+        return;  /* Storage full */
+    }
+    
+    /* Check for duplicates */
+    for (int i = 0; i < results->count; i++) {
+        if (strcmp(results->items[i].path, path) == 0) {
+            return;  /* Already stored */
+        }
+    }
+    
+    strncpy(results->items[results->count].path, path, MAX_PATH_LENGTH - 1);
+    results->items[results->count].path[MAX_PATH_LENGTH - 1] = '\0';
+    results->items[results->count].is_directory = is_directory;
+    results->items[results->count].size = size;
+    results->count++;
+}
+
+void store_check_new(const char *path, int is_directory, long long size) {
+    store_check_item(&g_check_new, path, is_directory, size);
+}
+
+void store_check_missing(const char *path, int is_directory, long long size) {
+    store_check_item(&g_check_missing, path, is_directory, size);
+}
+
+void show_check_new(void) {
+    if (g_check_new.count == 0) {
+        printf("\n[New on disk: 0 items]\n");
+        return;
+    }
+    
+    printf("\n[New on disk - not in database: %d items]\n", g_check_new.count);
+    for (int i = 0; i < g_check_new.count; i++) {
+        CheckItem *item = &g_check_new.items[i];
+        if (item->is_directory) {
+            printf_utf8("  [DIR]  %s\n", item->path);
+        } else {
+            printf_utf8("  [FILE] %s (%lld bytes)\n", item->path, item->size);
+        }
+    }
+}
+
+void show_check_missing(void) {
+    if (g_check_missing.count == 0) {
+        printf("\n[Missing from disk: 0 items]\n");
+        return;
+    }
+    
+    printf("\n[Missing from disk - in database: %d items]\n", g_check_missing.count);
+    for (int i = 0; i < g_check_missing.count; i++) {
+        CheckItem *item = &g_check_missing.items[i];
+        if (item->is_directory) {
+            printf_utf8("  [DIR]  %s\n", item->path);
+        } else {
+            printf_utf8("  [FILE] %s\n", item->path);
+        }
+    }
+}

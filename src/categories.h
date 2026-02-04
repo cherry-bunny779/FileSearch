@@ -32,4 +32,11 @@ int is_categorized(int path_id);
 void list_all_categories(void);
 void list_path_categories(const char *path);
 
+/* Category root management */
+int add_category_root(const char *category_name, const char *root_path);
+int remove_category_root(const char *category_name, const char *root_path);
+void list_all_roots(void);
+void list_category_roots(const char *category_name);
+int get_category_roots(const char *category_name, char roots[][MAX_PATH_LENGTH], int max_roots);
+
 #endif /* FILESEARCH_CATEGORIES_H */

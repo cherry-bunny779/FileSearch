@@ -43,4 +43,15 @@ int auto_tag_path(int path_id, const char *name);
 /* Path information display */
 void show_path_info(const char *path);
 
+/* Check/sync operations - compare filesystem against database */
+void check_path(const char *path, int max_depth);
+void check_category(const char *category_name, const char *specific_root);
+
+/* Add items from check_new buffer */
+void add_check_new_items(const char **categories, int category_count,
+                         const char **tags, int tag_count, int auto_tag);
+
+/* Remove items from check_missing buffer */
+void remove_check_missing_items(void);
+
 #endif /* FILESEARCH_PATHS_H */

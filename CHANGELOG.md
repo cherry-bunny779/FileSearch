@@ -2,7 +2,7 @@
 
 ## CLI Command Reference
 
-### v4.4 Commands (Current)
+### v4.5 Commands (Current)
 ```
 Note: Use quotes for paths with spaces, e.g., "C:\Program Files\App"
       Arrow keys work on macOS/Linux for command history (readline support)
@@ -56,6 +56,14 @@ Category Commands:
   create-category <name>             - Create category
   delete-category <name>             - Delete a category
   rename-category <old> <new>        - Rename a category
+  set-root <category> <path>         - Add root directory for a category
+  unset-root <category> <path>       - Remove root directory from a category
+  roots [category]                   - List all roots, or roots for a category
+
+Check/Sync Commands:
+  check <path> [-d N]                - Check path against database (find new/missing)
+  check -c <category>                - Check all roots for a category
+  check -c <category> --root <path>  - Check specific root for a category
 
 Settings Commands:
   set <key> <value>                  - Modify setting
@@ -109,6 +117,84 @@ make cleanall   # Remove all objects including SQLite
 # Custom database location
 ./filesearch --db /path/to/custom.db
 ```
+
+---
+
+## Version 4.5: Check/Sync & Category Roots
+
+### New Features
+
+#### Category Root Directories
+- **Categories can now have associated root directories**
+- New `category_roots` table in database schema
+- Multiple roots per category supported
+
+  **New commands:**
+  | Command | Description |
+  |---------|-------------|
+  | `set-root <category> <path>` | Add root directory for a category |
+  | `unset-root <category> <path>` | Remove root from a category |
+  | `roots [category]` | List all roots, or roots for a category |
+
+  **Example:**
+  ```
+  > set-root Games G:\Games
+  Set root for 'Games': G:\Games
+
+  > set-root Games D:\SteamLibrary
+  Set root for 'Games': D:\SteamLibrary
+
+  > roots Games
+  [Roots for 'Games']
+    D:\SteamLibrary
+    G:\Games
+  ```
+
+#### Check/Sync Command
+- **Compare filesystem against database to find new and missing items**
+- Supports both ad-hoc path checking and category-based checking
+- Interactive prompts to add new items or remove missing items
+
+  **Syntax:**
+  | Command | Description |
+  |---------|-------------|
+  | `check <path> [-d N]` | Check path against database |
+  | `check -c <category>` | Check all roots for a category |
+  | `check -c <category> --root <path>` | Check specific root only |
+
+  **Example workflow:**
+  ```
+  > check -c Games
+
+  Checking category 'Games' (2 roots)
+    Root 1: G:\Games
+    Root 2: D:\SteamLibrary
+
+  [New on disk - not in database: 3 items]
+    [DIR]  G:\Games\NewGame
+    [FILE] G:\Games\NewGame\data.pak (1234567 bytes)
+    [FILE] G:\Games\OtherGame\patch.dll (45678 bytes)
+
+  [Missing from disk - in database: 2 items]
+    [DIR]  G:\Games\DeletedGame
+
+  Add 3 new items to 'Games'? (y/n): y
+  Options: [-t tag...] [-a]
+  > -t new -a
+
+  Added 3 items.
+  Auto-tagged: 1 tag(s) extracted from filenames.
+
+  Remove missing items from database? (y/n): y
+  Removed 2 items (+ 15 children).
+  ```
+
+### Bug Fixes
+- Fixed UTF-8 display in `get_confirmation()` prompts
+- Case-insensitive tag match now notifies user: "Using existing tag 'Music' (matched 'music')"
+
+### Schema Changes
+- Added `category_roots` table for mapping categories to root directories
 
 ---
 

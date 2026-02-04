@@ -112,4 +112,26 @@ void clear_stored_results(void);
 void store_result(const char *path);
 void show_stored_results(void);
 
+/* Check results storage for sync operations */
+typedef struct {
+    char path[MAX_PATH_LENGTH];
+    int is_directory;
+    long long size;
+} CheckItem;
+
+#define MAX_CHECK_RESULTS 1000
+typedef struct {
+    CheckItem items[MAX_CHECK_RESULTS];
+    int count;
+} CheckResults;
+
+extern CheckResults g_check_new;      /* Items on disk, not in DB */
+extern CheckResults g_check_missing;  /* Items in DB, not on disk */
+
+void clear_check_results(void);
+void store_check_new(const char *path, int is_directory, long long size);
+void store_check_missing(const char *path, int is_directory, long long size);
+void show_check_new(void);
+void show_check_missing(void);
+
 #endif /* FILESEARCH_UTILS_H */

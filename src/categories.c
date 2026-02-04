@@ -404,3 +404,198 @@ void list_path_categories(const char *path) {
     
     sqlite3_finalize(stmt);
 }
+
+/* ============================================
+ * Category Root Management
+ * ============================================ */
+
+int add_category_root(const char *category_name, const char *root_path) {
+    int cat_id = get_category_id(category_name);
+    if (cat_id < 0) {
+        printf_utf8("Category not found: %s\n", category_name);
+        return -1;
+    }
+    
+    /* Normalize path - remove trailing slashes */
+    char normalized[MAX_PATH_LENGTH];
+    strncpy(normalized, root_path, sizeof(normalized) - 1);
+    normalized[sizeof(normalized) - 1] = '\0';
+    
+    size_t len = strlen(normalized);
+    while (len > 1 && (normalized[len-1] == '/' || normalized[len-1] == '\\')) {
+        normalized[--len] = '\0';
+    }
+    
+    /* Check if directory exists */
+    if (!directory_exists(normalized)) {
+        printf_utf8("Directory not found: %s\n", normalized);
+        return -1;
+    }
+    
+    sqlite3_stmt *stmt;
+    const char *sql = "INSERT OR IGNORE INTO category_roots (category_id, root_path) VALUES (?, ?);";
+    
+    if (sqlite3_prepare_v2(db, sql, -1, &stmt, NULL) != SQLITE_OK) {
+        fprintf(stderr, "Prepare error: %s\n", sqlite3_errmsg(db));
+        return -1;
+    }
+    
+    sqlite3_bind_int(stmt, 1, cat_id);
+    sqlite3_bind_text(stmt, 2, normalized, -1, SQLITE_STATIC);
+    
+    int rc = sqlite3_step(stmt);
+    sqlite3_finalize(stmt);
+    
+    if (rc == SQLITE_DONE) {
+        if (sqlite3_changes(db) > 0) {
+            printf_utf8("Set root for '%s': %s\n", category_name, normalized);
+            return 0;
+        } else {
+            printf_utf8("Root already exists for '%s': %s\n", category_name, normalized);
+            return 0;
+        }
+    }
+    return -1;
+}
+
+int remove_category_root(const char *category_name, const char *root_path) {
+    int cat_id = get_category_id(category_name);
+    if (cat_id < 0) {
+        printf_utf8("Category not found: %s\n", category_name);
+        return -1;
+    }
+    
+    /* Normalize path */
+    char normalized[MAX_PATH_LENGTH];
+    strncpy(normalized, root_path, sizeof(normalized) - 1);
+    normalized[sizeof(normalized) - 1] = '\0';
+    
+    size_t len = strlen(normalized);
+    while (len > 1 && (normalized[len-1] == '/' || normalized[len-1] == '\\')) {
+        normalized[--len] = '\0';
+    }
+    
+    sqlite3_stmt *stmt;
+    const char *sql = "DELETE FROM category_roots WHERE category_id = ? AND root_path = ?;";
+    
+    if (sqlite3_prepare_v2(db, sql, -1, &stmt, NULL) != SQLITE_OK) {
+        return -1;
+    }
+    
+    sqlite3_bind_int(stmt, 1, cat_id);
+    sqlite3_bind_text(stmt, 2, normalized, -1, SQLITE_STATIC);
+    
+    int rc = sqlite3_step(stmt);
+    sqlite3_finalize(stmt);
+    
+    if (rc == SQLITE_DONE) {
+        if (sqlite3_changes(db) > 0) {
+            printf_utf8("Removed root from '%s': %s\n", category_name, normalized);
+            return 0;
+        } else {
+            printf_utf8("Root not found for '%s': %s\n", category_name, normalized);
+            return -1;
+        }
+    }
+    return -1;
+}
+
+void list_all_roots(void) {
+    sqlite3_stmt *stmt;
+    const char *sql = 
+        "SELECT c.name, cr.root_path FROM category_roots cr "
+        "JOIN categories c ON c.id = cr.category_id "
+        "ORDER BY c.name, cr.root_path;";
+    
+    if (sqlite3_prepare_v2(db, sql, -1, &stmt, NULL) != SQLITE_OK) {
+        fprintf(stderr, "Query error: %s\n", sqlite3_errmsg(db));
+        return;
+    }
+    
+    printf("\n[Category Roots]\n");
+    int count = 0;
+    char last_cat[MAX_TAG_LENGTH] = "";
+    
+    while (sqlite3_step(stmt) == SQLITE_ROW) {
+        const char *cat = (const char *)sqlite3_column_text(stmt, 0);
+        const char *root = (const char *)sqlite3_column_text(stmt, 1);
+        
+        if (strcmp(cat, last_cat) != 0) {
+            if (count > 0) printf("\n");
+            printf_utf8("  %s:\n", cat);
+            strncpy(last_cat, cat, sizeof(last_cat) - 1);
+        }
+        printf_utf8("    %s\n", root);
+        count++;
+    }
+    
+    if (count == 0) {
+        printf("  (no roots defined)\n");
+    }
+    printf("\n");
+    
+    sqlite3_finalize(stmt);
+}
+
+void list_category_roots(const char *category_name) {
+    int cat_id = get_category_id(category_name);
+    if (cat_id < 0) {
+        printf_utf8("Category not found: %s\n", category_name);
+        return;
+    }
+    
+    sqlite3_stmt *stmt;
+    const char *sql = "SELECT root_path FROM category_roots WHERE category_id = ? ORDER BY root_path;";
+    
+    if (sqlite3_prepare_v2(db, sql, -1, &stmt, NULL) != SQLITE_OK) {
+        fprintf(stderr, "Query error: %s\n", sqlite3_errmsg(db));
+        return;
+    }
+    
+    sqlite3_bind_int(stmt, 1, cat_id);
+    
+    printf_utf8("\n[Roots for '%s']\n", category_name);
+    int count = 0;
+    while (sqlite3_step(stmt) == SQLITE_ROW) {
+        printf_utf8("  %s\n", sqlite3_column_text(stmt, 0));
+        count++;
+    }
+    
+    if (count == 0) {
+        printf("  (no roots defined)\n");
+    }
+    printf("\n");
+    
+    sqlite3_finalize(stmt);
+}
+
+/*
+ * Get all root paths for a category.
+ * Returns number of roots found.
+ */
+int get_category_roots(const char *category_name, char roots[][MAX_PATH_LENGTH], int max_roots) {
+    int cat_id = get_category_id(category_name);
+    if (cat_id < 0) {
+        return 0;
+    }
+    
+    sqlite3_stmt *stmt;
+    const char *sql = "SELECT root_path FROM category_roots WHERE category_id = ? ORDER BY root_path;";
+    
+    if (sqlite3_prepare_v2(db, sql, -1, &stmt, NULL) != SQLITE_OK) {
+        return 0;
+    }
+    
+    sqlite3_bind_int(stmt, 1, cat_id);
+    
+    int count = 0;
+    while (sqlite3_step(stmt) == SQLITE_ROW && count < max_roots) {
+        const char *root = (const char *)sqlite3_column_text(stmt, 0);
+        strncpy(roots[count], root, MAX_PATH_LENGTH - 1);
+        roots[count][MAX_PATH_LENGTH - 1] = '\0';
+        count++;
+    }
+    
+    sqlite3_finalize(stmt);
+    return count;
+}

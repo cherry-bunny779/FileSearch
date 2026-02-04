@@ -188,6 +188,15 @@ int create_schema(void) {
         "  FOREIGN KEY (tag_id) REFERENCES tags(id) ON DELETE CASCADE"
         ");"
         
+        /* Category roots table - maps categories to root directories */
+        "CREATE TABLE IF NOT EXISTS category_roots ("
+        "  id INTEGER PRIMARY KEY,"
+        "  category_id INTEGER NOT NULL,"
+        "  root_path TEXT NOT NULL,"
+        "  UNIQUE(category_id, root_path),"
+        "  FOREIGN KEY (category_id) REFERENCES categories(id) ON DELETE CASCADE"
+        ");"
+        
         /* Settings table */
         "CREATE TABLE IF NOT EXISTS settings ("
         "  key TEXT PRIMARY KEY,"

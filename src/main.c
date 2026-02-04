@@ -98,6 +98,15 @@ void print_help(void) {
     printf("  create-category <name>        - Create new category\n");
     printf("  delete-category <name>        - Delete a category\n");
     printf("  rename-category <old> <new>   - Rename a category\n");
+    printf("  set-root <category> <path>    - Add root directory for a category\n");
+    printf("  unset-root <category> <path>  - Remove root directory from a category\n");
+    printf("  roots [category]              - List all roots, or roots for a category\n");
+    printf("\n");
+    printf("Check/Sync Commands:\n");
+    printf("  check <path> [-d N]           - Check path against database (find new/missing)\n");
+    printf("  check -c <category>           - Check all roots for a category\n");
+    printf("  check -c <category> --root <path>\n");
+    printf("                                - Check specific root for a category\n");
     printf("\n");
     printf("Settings Commands:\n");
     printf("  set <key> <value>             - Modify a setting\n");
@@ -737,6 +746,229 @@ void run_interactive_cli(void) {
                     rename_category(old_name, new_name);
                 } else {
                     printf("Usage: rename-category <old_name> <new_name>\n");
+                }
+            }
+        }
+        /* ============================================
+         * Category Root Commands
+         * ============================================ */
+        else if (strcmp(command, "set-root") == 0) {
+            if (strlen(argument) == 0) {
+                printf("Usage: set-root <category> <path>\n");
+            } else {
+                char category[MAX_TAG_LENGTH], root_path[MAX_PATH_LENGTH];
+                parse_two_args(argument, category, sizeof(category), root_path, sizeof(root_path));
+                
+                if (strlen(category) == 0 || strlen(root_path) == 0) {
+                    printf("Usage: set-root <category> <path>\n");
+                } else {
+                    add_category_root(category, root_path);
+                }
+            }
+        }
+        else if (strcmp(command, "unset-root") == 0) {
+            if (strlen(argument) == 0) {
+                printf("Usage: unset-root <category> <path>\n");
+            } else {
+                char category[MAX_TAG_LENGTH], root_path[MAX_PATH_LENGTH];
+                parse_two_args(argument, category, sizeof(category), root_path, sizeof(root_path));
+                
+                if (strlen(category) == 0 || strlen(root_path) == 0) {
+                    printf("Usage: unset-root <category> <path>\n");
+                } else {
+                    remove_category_root(category, root_path);
+                }
+            }
+        }
+        else if (strcmp(command, "roots") == 0) {
+            if (strlen(argument) == 0) {
+                list_all_roots();
+            } else {
+                list_category_roots(argument);
+            }
+        }
+        /* ============================================
+         * Check/Sync Commands
+         * ============================================ */
+        else if (strcmp(command, "check") == 0) {
+            if (strlen(argument) == 0) {
+                printf("Usage: check <path> [-d depth]\n");
+                printf("       check -c <category> [--root <path>]\n");
+            } else {
+                /* Parse check arguments */
+                char category[MAX_TAG_LENGTH] = "";
+                char path[MAX_PATH_LENGTH] = "";
+                char specific_root[MAX_PATH_LENGTH] = "";
+                int max_depth = -1;  /* Unlimited by default */
+                
+                /* Tokenize arguments */
+                char args_copy[MAX_INPUT_LENGTH * 2];
+                strncpy(args_copy, argument, sizeof(args_copy) - 1);
+                args_copy[sizeof(args_copy) - 1] = '\0';
+                
+                char *tokens[32];
+                int token_count = 0;
+                char *token = strtok(args_copy, " ");
+                while (token && token_count < 32) {
+                    tokens[token_count++] = token;
+                    token = strtok(NULL, " ");
+                }
+                
+                /* Parse tokens */
+                int i = 0;
+                while (i < token_count) {
+                    if (strcmp(tokens[i], "-c") == 0 && i + 1 < token_count) {
+                        strncpy(category, tokens[i + 1], sizeof(category) - 1);
+                        i += 2;
+                    } else if (strcmp(tokens[i], "--root") == 0 && i + 1 < token_count) {
+                        strncpy(specific_root, tokens[i + 1], sizeof(specific_root) - 1);
+                        i += 2;
+                    } else if (strcmp(tokens[i], "-d") == 0 && i + 1 < token_count) {
+                        max_depth = atoi(tokens[i + 1]);
+                        if (max_depth < 0) max_depth = 0;
+                        i += 2;
+                    } else if (path[0] == '\0') {
+                        strncpy(path, tokens[i], sizeof(path) - 1);
+                        i++;
+                    } else {
+                        i++;
+                    }
+                }
+                
+                if (category[0] != '\0') {
+                    /* Category-based check */
+                    check_category(category, specific_root);
+                    
+                    /* Prompt to add new items if any */
+                    if (g_check_new.count > 0) {
+                        printf("Add %d new items to '%s'? (y/n): ", g_check_new.count, category);
+                        fflush(stdout);
+                        char response[16];
+                        if (read_utf8_line(response, sizeof(response), stdin)) {
+                            trim_whitespace(response);
+                            if (response[0] == 'y' || response[0] == 'Y') {
+                                /* Get additional options */
+                                printf("Options: [-t tag...] [-a]\n> ");
+                                fflush(stdout);
+                                char opts[MAX_INPUT_LENGTH];
+                                if (read_utf8_line(opts, sizeof(opts), stdin)) {
+                                    trim_whitespace(opts);
+                                    
+                                    /* Parse options */
+                                    const char *cat_ptrs[1] = { category };
+                                    char opt_tags[MAX_TAGS][MAX_TAG_LENGTH];
+                                    const char *tag_ptrs[MAX_TAGS];
+                                    int tag_count = 0;
+                                    int auto_tag = 0;
+                                    
+                                    char opts_copy[MAX_INPUT_LENGTH];
+                                    strncpy(opts_copy, opts, sizeof(opts_copy) - 1);
+                                    opts_copy[sizeof(opts_copy) - 1] = '\0';
+                                    
+                                    char *opt_tok = strtok(opts_copy, " ");
+                                    int in_tags = 0;
+                                    while (opt_tok) {
+                                        if (strcmp(opt_tok, "-t") == 0) {
+                                            in_tags = 1;
+                                        } else if (strcmp(opt_tok, "-a") == 0 || strcmp(opt_tok, "--auto-tag") == 0) {
+                                            auto_tag = 1;
+                                            in_tags = 0;
+                                        } else if (opt_tok[0] == '-') {
+                                            in_tags = 0;
+                                        } else if (in_tags && tag_count < MAX_TAGS) {
+                                            strncpy(opt_tags[tag_count], opt_tok, MAX_TAG_LENGTH - 1);
+                                            opt_tags[tag_count][MAX_TAG_LENGTH - 1] = '\0';
+                                            tag_ptrs[tag_count] = opt_tags[tag_count];
+                                            tag_count++;
+                                        }
+                                        opt_tok = strtok(NULL, " ");
+                                    }
+                                    
+                                    add_check_new_items(cat_ptrs, 1, tag_ptrs, tag_count, auto_tag);
+                                }
+                            }
+                        }
+                    }
+                    
+                    /* Prompt to remove missing items if any */
+                    if (g_check_missing.count > 0) {
+                        if (get_confirmation("Remove missing items from database?")) {
+                            remove_check_missing_items();
+                        }
+                    }
+                } else if (path[0] != '\0') {
+                    /* Path-based check */
+                    check_path(path, max_depth);
+                    
+                    /* Prompt to add new items if any */
+                    if (g_check_new.count > 0) {
+                        printf("Add %d new items? (y/n): ", g_check_new.count);
+                        fflush(stdout);
+                        char response[16];
+                        if (read_utf8_line(response, sizeof(response), stdin)) {
+                            trim_whitespace(response);
+                            if (response[0] == 'y' || response[0] == 'Y') {
+                                /* Get additional options */
+                                printf("Options: [-c cat...] [-t tag...] [-a]\n> ");
+                                fflush(stdout);
+                                char opts[MAX_INPUT_LENGTH];
+                                if (read_utf8_line(opts, sizeof(opts), stdin)) {
+                                    trim_whitespace(opts);
+                                    
+                                    /* Parse options */
+                                    char opt_cats[MAX_CATEGORIES][MAX_TAG_LENGTH];
+                                    char opt_tags[MAX_TAGS][MAX_TAG_LENGTH];
+                                    const char *cat_ptrs[MAX_CATEGORIES];
+                                    const char *tag_ptrs[MAX_TAGS];
+                                    int cat_count = 0;
+                                    int tag_count = 0;
+                                    int auto_tag = 0;
+                                    
+                                    char opts_copy[MAX_INPUT_LENGTH];
+                                    strncpy(opts_copy, opts, sizeof(opts_copy) - 1);
+                                    opts_copy[sizeof(opts_copy) - 1] = '\0';
+                                    
+                                    char *opt_tok = strtok(opts_copy, " ");
+                                    int mode = 0;  /* 0=none, 1=cats, 2=tags */
+                                    while (opt_tok) {
+                                        if (strcmp(opt_tok, "-c") == 0) {
+                                            mode = 1;
+                                        } else if (strcmp(opt_tok, "-t") == 0) {
+                                            mode = 2;
+                                        } else if (strcmp(opt_tok, "-a") == 0 || strcmp(opt_tok, "--auto-tag") == 0) {
+                                            auto_tag = 1;
+                                            mode = 0;
+                                        } else if (opt_tok[0] == '-') {
+                                            mode = 0;
+                                        } else if (mode == 1 && cat_count < MAX_CATEGORIES) {
+                                            strncpy(opt_cats[cat_count], opt_tok, MAX_TAG_LENGTH - 1);
+                                            opt_cats[cat_count][MAX_TAG_LENGTH - 1] = '\0';
+                                            cat_ptrs[cat_count] = opt_cats[cat_count];
+                                            cat_count++;
+                                        } else if (mode == 2 && tag_count < MAX_TAGS) {
+                                            strncpy(opt_tags[tag_count], opt_tok, MAX_TAG_LENGTH - 1);
+                                            opt_tags[tag_count][MAX_TAG_LENGTH - 1] = '\0';
+                                            tag_ptrs[tag_count] = opt_tags[tag_count];
+                                            tag_count++;
+                                        }
+                                        opt_tok = strtok(NULL, " ");
+                                    }
+                                    
+                                    add_check_new_items(cat_ptrs, cat_count, tag_ptrs, tag_count, auto_tag);
+                                }
+                            }
+                        }
+                    }
+                    
+                    /* Prompt to remove missing items if any */
+                    if (g_check_missing.count > 0) {
+                        if (get_confirmation("Remove missing items from database?")) {
+                            remove_check_missing_items();
+                        }
+                    }
+                } else {
+                    printf("Usage: check <path> [-d depth]\n");
+                    printf("       check -c <category> [--root <path>]\n");
                 }
             }
         }

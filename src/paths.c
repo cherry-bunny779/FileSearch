@@ -697,3 +697,457 @@ void show_path_info(const char *path) {
     
     printf_utf8("\n");
 }
+
+/* ============================================
+ * Check/Sync Operations
+ * ============================================ */
+
+/* Temporary storage for filesystem scan */
+#define MAX_FS_PATHS 10000
+static struct {
+    char paths[MAX_FS_PATHS][MAX_PATH_LENGTH];
+    int is_dir[MAX_FS_PATHS];
+    long long sizes[MAX_FS_PATHS];
+    int count;
+} g_fs_scan = { .count = 0 };
+
+static void clear_fs_scan(void) {
+    g_fs_scan.count = 0;
+}
+
+static void store_fs_path(const char *path, int is_directory, long long size) {
+    if (g_fs_scan.count >= MAX_FS_PATHS) return;
+    
+    strncpy(g_fs_scan.paths[g_fs_scan.count], path, MAX_PATH_LENGTH - 1);
+    g_fs_scan.paths[g_fs_scan.count][MAX_PATH_LENGTH - 1] = '\0';
+    g_fs_scan.is_dir[g_fs_scan.count] = is_directory;
+    g_fs_scan.sizes[g_fs_scan.count] = size;
+    g_fs_scan.count++;
+}
+
+/*
+ * Recursively scan filesystem and collect paths (without adding to DB).
+ */
+static int scan_filesystem(const char *dir_path, int current_depth, int max_depth) {
+    if (max_depth >= 0 && current_depth > max_depth) {
+        return 0;
+    }
+    
+    if (current_depth > MAX_RECURSION_DEPTH) {
+        return 0;
+    }
+    
+#ifdef _WIN32
+    char search_path[MAX_PATH_LENGTH];
+    snprintf(search_path, sizeof(search_path), "%s\\*", dir_path);
+    
+    wchar_t *wide_path = utf8_to_wide(search_path);
+    if (!wide_path) return 0;
+    
+    WIN32_FIND_DATAW find_data;
+    HANDLE hFind = FindFirstFileW(wide_path, &find_data);
+    free(wide_path);
+    
+    if (hFind == INVALID_HANDLE_VALUE) {
+        return 0;
+    }
+    
+    do {
+        if (wcscmp(find_data.cFileName, L".") == 0 || 
+            wcscmp(find_data.cFileName, L"..") == 0) {
+            continue;
+        }
+        
+        char *name_utf8 = wide_to_utf8(find_data.cFileName);
+        if (!name_utf8) continue;
+        
+        char full_path[MAX_PATH_LENGTH];
+        snprintf(full_path, sizeof(full_path), "%s%s%s", 
+                 dir_path, PATH_SEPARATOR_STR, name_utf8);
+        
+        int is_dir = (find_data.dwFileAttributes & FILE_ATTRIBUTE_DIRECTORY) != 0;
+        long long size = -1;
+        if (!is_dir) {
+            LARGE_INTEGER li;
+            li.LowPart = find_data.nFileSizeLow;
+            li.HighPart = find_data.nFileSizeHigh;
+            size = li.QuadPart;
+        }
+        
+        store_fs_path(full_path, is_dir, size);
+        
+        if (is_dir) {
+            scan_filesystem(full_path, current_depth + 1, max_depth);
+        }
+        
+        free(name_utf8);
+    } while (FindNextFileW(hFind, &find_data));
+    
+    FindClose(hFind);
+#else
+    DIR *dir = opendir(dir_path);
+    if (!dir) {
+        return 0;
+    }
+    
+    struct dirent *entry;
+    while ((entry = readdir(dir)) != NULL) {
+        if (strcmp(entry->d_name, ".") == 0 || strcmp(entry->d_name, "..") == 0) {
+            continue;
+        }
+        
+        char full_path[MAX_PATH_LENGTH];
+        snprintf(full_path, sizeof(full_path), "%s%s%s", 
+                 dir_path, PATH_SEPARATOR_STR, entry->d_name);
+        
+        struct stat st;
+        if (stat(full_path, &st) != 0) {
+            continue;
+        }
+        
+        int is_dir = S_ISDIR(st.st_mode);
+        long long size = is_dir ? -1 : st.st_size;
+        
+        store_fs_path(full_path, is_dir, size);
+        
+        if (is_dir) {
+            scan_filesystem(full_path, current_depth + 1, max_depth);
+        }
+    }
+    
+    closedir(dir);
+#endif
+    
+    return 0;
+}
+
+/*
+ * Check if a path exists in the filesystem scan results.
+ */
+static int path_in_fs_scan(const char *path) {
+    for (int i = 0; i < g_fs_scan.count; i++) {
+        if (strcmp(g_fs_scan.paths[i], path) == 0) {
+            return 1;
+        }
+    }
+    return 0;
+}
+
+/*
+ * Check if a path exists in the database.
+ */
+static int path_in_db(const char *path) {
+    return get_path_id(path) >= 0;
+}
+
+/*
+ * Check a path against the database.
+ * Populates g_check_new and g_check_missing buffers.
+ */
+void check_path(const char *path, int max_depth) {
+    char normalized[MAX_PATH_LENGTH];
+    strncpy(normalized, path, sizeof(normalized) - 1);
+    normalized[sizeof(normalized) - 1] = '\0';
+    
+    /* Remove trailing slashes */
+    size_t len = strlen(normalized);
+    while (len > 1 && (normalized[len-1] == '/' || normalized[len-1] == '\\')) {
+        normalized[--len] = '\0';
+    }
+    
+    if (!directory_exists(normalized)) {
+        printf_utf8("Directory not found: %s\n", normalized);
+        return;
+    }
+    
+    clear_check_results();
+    clear_fs_scan();
+    
+    /* Store the root itself */
+    store_fs_path(normalized, 1, -1);
+    
+    /* Scan filesystem */
+    if (max_depth < 0) {
+        printf_utf8("\nChecking: %s (unlimited depth)\n", normalized);
+    } else {
+        printf_utf8("\nChecking: %s (depth %d)\n", normalized, max_depth);
+    }
+    
+    scan_filesystem(normalized, 0, max_depth);
+    
+    /* Find NEW items: in filesystem but not in DB */
+    for (int i = 0; i < g_fs_scan.count; i++) {
+        if (!path_in_db(g_fs_scan.paths[i])) {
+            store_check_new(g_fs_scan.paths[i], g_fs_scan.is_dir[i], g_fs_scan.sizes[i]);
+        }
+    }
+    
+    /* Find MISSING items: in DB but not in filesystem */
+    sqlite3_stmt *stmt;
+    char pattern[MAX_PATH_LENGTH];
+    snprintf(pattern, sizeof(pattern), "%s%s", normalized, PATH_SEPARATOR_STR);
+    
+    const char *sql = 
+        "SELECT path, is_directory, size FROM paths "
+        "WHERE path = ? OR path LIKE ? || '%';";
+    
+    if (sqlite3_prepare_v2(db, sql, -1, &stmt, NULL) == SQLITE_OK) {
+        sqlite3_bind_text(stmt, 1, normalized, -1, SQLITE_STATIC);
+        sqlite3_bind_text(stmt, 2, pattern, -1, SQLITE_STATIC);
+        
+        while (sqlite3_step(stmt) == SQLITE_ROW) {
+            const char *db_path = (const char *)sqlite3_column_text(stmt, 0);
+            int is_dir = sqlite3_column_int(stmt, 1);
+            long long size = sqlite3_column_int64(stmt, 2);
+            
+            if (!path_in_fs_scan(db_path)) {
+                /* Check if parent is already marked missing (auto-include children) */
+                int parent_missing = 0;
+                for (int i = 0; i < g_check_missing.count; i++) {
+                    if (g_check_missing.items[i].is_directory) {
+                        size_t plen = strlen(g_check_missing.items[i].path);
+                        if (strncmp(db_path, g_check_missing.items[i].path, plen) == 0 &&
+                            (db_path[plen] == '/' || db_path[plen] == '\\')) {
+                            parent_missing = 1;
+                            break;
+                        }
+                    }
+                }
+                
+                if (!parent_missing) {
+                    store_check_missing(db_path, is_dir, size);
+                }
+            }
+        }
+        sqlite3_finalize(stmt);
+    }
+    
+    /* Display results */
+    show_check_new();
+    show_check_missing();
+    printf("\n");
+}
+
+/*
+ * Check a category's root directories.
+ */
+void check_category(const char *category_name, const char *specific_root) {
+    char roots[16][MAX_PATH_LENGTH];
+    int root_count = get_category_roots(category_name, roots, 16);
+    
+    if (root_count == 0) {
+        printf_utf8("No roots defined for category '%s'\n", category_name);
+        printf("Use 'set-root %s <path>' to add a root directory.\n", category_name);
+        return;
+    }
+    
+    if (specific_root && specific_root[0] != '\0') {
+        /* Check only the specified root */
+        int found = 0;
+        for (int i = 0; i < root_count; i++) {
+            if (strcmp(roots[i], specific_root) == 0) {
+                found = 1;
+                break;
+            }
+        }
+        
+        if (!found) {
+            printf_utf8("'%s' is not a root for category '%s'\n", specific_root, category_name);
+            return;
+        }
+        
+        printf_utf8("Checking category '%s' (1 root)\n", category_name);
+        check_path(specific_root, -1);
+    } else {
+        /* Check all roots */
+        printf_utf8("Checking category '%s' (%d root%s)\n", 
+                   category_name, root_count, root_count > 1 ? "s" : "");
+        
+        /* Accumulate results across all roots */
+        clear_check_results();
+        
+        for (int i = 0; i < root_count; i++) {
+            printf_utf8("\n  Root %d: %s\n", i + 1, roots[i]);
+            
+            /* Temporarily save current counts */
+            int prev_new = g_check_new.count;
+            int prev_missing = g_check_missing.count;
+            
+            check_path(roots[i], -1);
+            
+            printf_utf8("    New: %d, Missing: %d\n", 
+                       g_check_new.count - prev_new,
+                       g_check_missing.count - prev_missing);
+        }
+        
+        /* Show combined totals */
+        printf("\n[Combined Totals]\n");
+        show_check_new();
+        show_check_missing();
+        printf("\n");
+    }
+}
+
+/*
+ * Add items from g_check_new buffer to database with metadata.
+ */
+void add_check_new_items(const char **categories, int category_count,
+                         const char **tags, int tag_count, int auto_tag) {
+    if (g_check_new.count == 0) {
+        printf("No new items to add.\n");
+        return;
+    }
+    
+    /* Pre-resolve category IDs */
+    int cat_ids[16];
+    int valid_cat_count = 0;
+    int has_non_uncategorized = 0;
+    
+    for (int i = 0; i < category_count && i < 16; i++) {
+        if (categories[i] && categories[i][0] != '\0') {
+            int cat_id = get_category_id(categories[i]);
+            if (cat_id >= 0) {
+                cat_ids[valid_cat_count++] = cat_id;
+                
+                char lower_name[MAX_TAG_LENGTH];
+                strncpy(lower_name, categories[i], sizeof(lower_name) - 1);
+                lower_name[sizeof(lower_name) - 1] = '\0';
+                str_to_lower(lower_name);
+                if (strcmp(lower_name, "uncategorized") != 0) {
+                    has_non_uncategorized = 1;
+                }
+                printf_utf8("  Category: %s\n", categories[i]);
+            } else {
+                printf_utf8("  Category not found: %s\n", categories[i]);
+            }
+        }
+    }
+    
+    /* Pre-resolve tag IDs */
+    int tag_ids[32];
+    int valid_tag_count = 0;
+    
+    for (int i = 0; i < tag_count && i < 32; i++) {
+        if (tags[i] && tags[i][0] != '\0') {
+            int tag_id = get_or_create_tag_with_check(tags[i]);
+            if (tag_id >= 0) {
+                tag_ids[valid_tag_count++] = tag_id;
+                printf_utf8("  Tag: %s\n", tags[i]);
+            }
+        }
+    }
+    
+    int added = 0;
+    int auto_tags_applied = 0;
+    
+    for (int i = 0; i < g_check_new.count; i++) {
+        CheckItem *item = &g_check_new.items[i];
+        const char *name = get_filename_from_path(item->path);
+        
+        /* Determine parent path */
+        char parent[MAX_PATH_LENGTH] = "";
+        const char *last_sep = strrchr(item->path, PATH_SEPARATOR);
+        if (last_sep && last_sep != item->path) {
+            size_t parent_len = last_sep - item->path;
+            strncpy(parent, item->path, parent_len);
+            parent[parent_len] = '\0';
+        }
+        
+        /* Add to database */
+        if (add_path_to_db(item->path, name, item->is_directory, item->size, 
+                           parent[0] ? parent : NULL) == 0) {
+            int path_id = get_path_id(item->path);
+            if (path_id >= 0) {
+                /* Apply categories */
+                for (int c = 0; c < valid_cat_count; c++) {
+                    categorize_path_by_id(path_id, cat_ids[c]);
+                }
+                if (has_non_uncategorized) {
+                    remove_uncategorized(path_id);
+                }
+                
+                /* Apply tags */
+                for (int t = 0; t < valid_tag_count; t++) {
+                    tag_path_by_id(path_id, tag_ids[t]);
+                }
+                
+                /* Auto-tag */
+                if (auto_tag) {
+                    auto_tags_applied += auto_tag_path(path_id, name);
+                }
+            }
+            added++;
+        }
+    }
+    
+    printf("\nAdded %d items.\n", added);
+    if (auto_tag && auto_tags_applied > 0) {
+        printf("Auto-tagged: %d tag(s) extracted from filenames.\n", auto_tags_applied);
+    }
+    
+    g_check_new.count = 0;
+}
+
+/*
+ * Remove items from g_check_missing buffer from database.
+ * Also removes children of missing directories.
+ */
+void remove_check_missing_items(void) {
+    if (g_check_missing.count == 0) {
+        printf("No missing items to remove.\n");
+        return;
+    }
+    
+    int removed = 0;
+    int children_removed = 0;
+    
+    for (int i = 0; i < g_check_missing.count; i++) {
+        CheckItem *item = &g_check_missing.items[i];
+        
+        if (item->is_directory) {
+            /* Count and remove children first */
+            sqlite3_stmt *count_stmt;
+            const char *count_sql = 
+                "SELECT COUNT(*) FROM paths WHERE path LIKE ? || '%' AND path != ?;";
+            
+            char pattern[MAX_PATH_LENGTH];
+            snprintf(pattern, sizeof(pattern), "%s%s", item->path, PATH_SEPARATOR_STR);
+            
+            if (sqlite3_prepare_v2(db, count_sql, -1, &count_stmt, NULL) == SQLITE_OK) {
+                sqlite3_bind_text(count_stmt, 1, pattern, -1, SQLITE_STATIC);
+                sqlite3_bind_text(count_stmt, 2, item->path, -1, SQLITE_STATIC);
+                
+                if (sqlite3_step(count_stmt) == SQLITE_ROW) {
+                    children_removed += sqlite3_column_int(count_stmt, 0);
+                }
+                sqlite3_finalize(count_stmt);
+            }
+            
+            /* Remove children */
+            remove_contents_under_path(item->path);
+        }
+        
+        /* Remove the item itself */
+        int path_id = get_path_id(item->path);
+        if (path_id >= 0) {
+            sqlite3_stmt *stmt;
+            const char *sql = "DELETE FROM paths WHERE id = ?;";
+            
+            if (sqlite3_prepare_v2(db, sql, -1, &stmt, NULL) == SQLITE_OK) {
+                sqlite3_bind_int(stmt, 1, path_id);
+                if (sqlite3_step(stmt) == SQLITE_DONE) {
+                    removed++;
+                }
+                sqlite3_finalize(stmt);
+            }
+        }
+    }
+    
+    if (children_removed > 0) {
+        printf("Removed %d items (+ %d children).\n", removed, children_removed);
+    } else {
+        printf("Removed %d items.\n", removed);
+    }
+    
+    g_check_missing.count = 0;
+}
