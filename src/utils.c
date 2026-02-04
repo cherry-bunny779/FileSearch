@@ -109,7 +109,7 @@ void str_to_lower(char *str) {
 
 int get_confirmation(const char *prompt) {
     char response[16];
-    printf("%s (y/n): ", prompt);
+    printf_utf8("%s (y/n): ", prompt);
     fflush(stdout);
     
     if (!read_utf8_line(response, sizeof(response), stdin)) {
