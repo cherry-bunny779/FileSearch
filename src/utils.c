@@ -280,10 +280,38 @@ void parse_two_args(const char *input, char *arg1, size_t size1, char *arg2, siz
         /* Skip whitespace after first arg */
         while (*remainder && isspace(*remainder)) remainder++;
         if (*remainder) {
-            strncpy(arg2, remainder, size2 - 1);
-            arg2[size2 - 1] = '\0';
-            trim_whitespace(arg2);
+            /* Try to extract quoted second argument */
+            const char *dummy_remainder = NULL;
+            if (extract_quoted_path(remainder, arg2, size2, &dummy_remainder) != 0) {
+                /* Fallback: copy remainder as-is */
+                strncpy(arg2, remainder, size2 - 1);
+                arg2[size2 - 1] = '\0';
+                trim_whitespace(arg2);
+            }
         }
+        return;
+    }
+    
+    /* Check if second argument is quoted (find quote after first word) */
+    const char *p = input;
+    while (*p && !isspace(*p)) p++;  /* Skip first word */
+    while (*p && isspace(*p)) p++;   /* Skip whitespace */
+    
+    if (*p == '"' || *p == '\'') {
+        /* Second argument is quoted - extract first word, then quoted second */
+        size_t first_len = 0;
+        const char *q = input;
+        while (*q && !isspace(*q)) {
+            if (first_len < size1 - 1) {
+                arg1[first_len++] = *q;
+            }
+            q++;
+        }
+        arg1[first_len] = '\0';
+        
+        /* Extract quoted second argument */
+        const char *dummy_remainder = NULL;
+        extract_quoted_path(p, arg2, size2, &dummy_remainder);
         return;
     }
     
